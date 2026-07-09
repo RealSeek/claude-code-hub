@@ -7,6 +7,10 @@ const withNextIntl = createNextIntlPlugin("./src/i18n/request.ts");
 const nextConfig: NextConfig = {
   output: "standalone",
 
+  // tsgo already runs type-checking before next build; skip the duplicate
+  // Next.js built-in TS worker to avoid OOM on memory-constrained servers.
+  typescript: { ignoreBuildErrors: true },
+
   // 转译 ESM 模块（@lobehub/icons 需要）
   transpilePackages: ["@lobehub/icons"],
 
