@@ -20,6 +20,13 @@ import { checkProviderGroupMatch } from "../proxy/provider-selector";
 
 type ResponseFormat = "openai" | "anthropic" | "gemini" | "codex";
 
+const PLAIN_OPENAI_MODEL_PROVIDER_TYPES: Provider["providerType"][] = [
+  "claude",
+  "claude-auth",
+  "codex",
+  "openai-compatible",
+];
+
 export interface FetchedModel {
   id: string;
   displayName?: string;
@@ -349,9 +356,14 @@ async function getAvailableModels(
     user: { id: number; providerGroup: string | null };
     key: { providerGroup: string | null };
   },
-  clientFormat: ClientFormat
+  clientFormat: ClientFormat,
+  responseFormat: ResponseFormat,
+  hasClientFormatOverride: boolean
 ): Promise<{ models: FetchedModel[]; providerName?: string }> {
-  const providerTypes = getProviderTypesForFormat(clientFormat);
+  const providerTypes =
+    responseFormat === "openai" && !hasClientFormatOverride
+      ? PLAIN_OPENAI_MODEL_PROVIDER_TYPES
+      : getProviderTypesForFormat(clientFormat);
   return getAvailableModelsByProviderTypes(authState, providerTypes);
 }
 
@@ -555,7 +567,12 @@ export async function handleAvailableModels(c: Context): Promise<Response> {
       clientFormatOverride: clientFormatOverride || undefined,
     });
 
-    const { models, providerName } = await getAvailableModels({ user, key }, clientFormat);
+    const { models, providerName } = await getAvailableModels(
+      { user, key },
+      clientFormat,
+      responseFormat,
+      Boolean(clientFormatOverride)
+    );
 
     logger.debug("[AvailableModels] Response ready", {
       userId: user.id,
