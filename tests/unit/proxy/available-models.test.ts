@@ -1,4 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
+import type { Provider } from "@/types/provider";
 
 // Mock dependencies that cause import issues
 vi.mock("@/lib/proxy-agent", () => ({
@@ -31,6 +32,7 @@ import {
   formatGeminiResponse,
   formatOpenAIResponse,
   getProviderTypesForFormat,
+  handleAvailableModels,
   inferOwner,
   type FetchedModel,
 } from "@/app/v1/_lib/models/available-models";
@@ -124,6 +126,64 @@ describe("getProviderTypesForFormat - 客户端格式到 Provider 类型映射",
 
   test("response 格式应仅返回 codex 类型", () => {
     expect(getProviderTypesForFormat("response")).toEqual(["codex"]);
+  });
+});
+
+describe("handleAvailableModels - 默认模型列表", () => {
+  test("plain /v1/models 应以 OpenAI schema 返回 Claude provider 模型", async () => {
+    const { resolveApiKeyAuthOutcome } = await import("@/repository/key");
+    const { findAllProviders } = await import("@/repository/provider");
+    const { checkProviderGroupMatch } = await import("@/app/v1/_lib/proxy/provider-selector");
+
+    vi.mocked(resolveApiKeyAuthOutcome).mockResolvedValueOnce({
+      ok: true,
+      user: { id: 1, providerGroup: "claude-group", isEnabled: true, expiresAt: null },
+      key: { providerGroup: "claude-group", name: "claude-key" },
+    } as never);
+    vi.mocked(checkProviderGroupMatch).mockReturnValueOnce(true);
+    vi.mocked(findAllProviders).mockResolvedValueOnce([
+      {
+        id: 1,
+        name: "anthropic-primary",
+        providerType: "claude",
+        url: "https://api.anthropic.com",
+        key: "upstream-key",
+        allowedModels: ["claude-sonnet-4-20250514"],
+        isEnabled: true,
+        activeTimeStart: null,
+        activeTimeEnd: null,
+        groupTag: "claude-group",
+      } as unknown as Provider,
+    ]);
+
+    const response = await handleAvailableModels({
+      req: {
+        path: "/v1/models",
+        header: (name: string) => {
+          if (name.toLowerCase() === "x-api-key") return "user-key";
+          return undefined;
+        },
+        query: () => undefined,
+      },
+      json: (body: unknown, status?: number) =>
+        new Response(JSON.stringify(body), {
+          status: status ?? 200,
+          headers: { "content-type": "application/json" },
+        }),
+    } as never);
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as OpenAIModelsResponse;
+    expect(body).toMatchObject({
+      object: "list",
+      data: [
+        {
+          id: "claude-sonnet-4-20250514",
+          object: "model",
+          owned_by: "anthropic",
+        },
+      ],
+    });
   });
 });
 
