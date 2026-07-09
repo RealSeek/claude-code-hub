@@ -116,7 +116,8 @@ function checkFormatProviderTypeCompatibility(
     case "response":
       return providerType === "codex";
     case "openai":
-      return providerType === "openai-compatible";
+      // codex providers (OpenAI API) natively support chat completions
+      return providerType === "openai-compatible" || providerType === "codex";
     case "gemini":
       return providerType === "gemini";
     case "gemini-cli":
