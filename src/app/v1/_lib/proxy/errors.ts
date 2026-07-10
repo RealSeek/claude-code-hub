@@ -30,7 +30,7 @@ export class ProxyError extends Error {
        * 上游响应体（智能截断）。
        *
        * 注意：该字段会进入 getDetailedErrorMessage()，并被记录到数据库中，
-       * 因此不要在这里放入“大段原文”或未脱敏的敏感内容。
+       * 因此不要在这里放入”大段原文”或未脱敏的敏感内容。
        */
       body: string;
       parsed?: unknown; // 解析后的 JSON（如果有）
@@ -42,10 +42,10 @@ export class ProxyError extends Error {
        * 上游响应体原文（通常为前缀片段）。
        *
        * 设计目标：
-       * - 仅用于“本次错误响应”返回给客户端（受系统设置控制）；
+       * - 仅用于”本次错误响应”返回给客户端（受系统设置控制）；
        * - 不参与规则匹配与持久化（避免污染数据库/日志）。
        *
-       * 目前主要用于“假 200”检测：HTTP 状态码为 2xx，但 body 实际为错误页/错误 JSON。
+       * 目前主要用于”假 200”检测：HTTP 状态码为 2xx，但 body 实际为错误页/错误 JSON。
        */
       rawBody?: string;
       rawBodyTruncated?: boolean;
@@ -54,10 +54,10 @@ export class ProxyError extends Error {
       isSyntheticFake200?: boolean;
 
       /**
-       * 标记该 ProxyError 的 statusCode 是否由“响应体内容”推断得出（而非上游真实 HTTP 状态码）。
+       * 标记该 ProxyError 的 statusCode 是否由”响应体内容”推断得出（而非上游真实 HTTP 状态码）。
        *
        * 典型场景：上游返回 HTTP 200，但 body 为错误页/错误 JSON（假 200）。此时 CCH 会根据响应体内容推断更贴近语义的 4xx/5xx，
-       * 以便让故障转移/熔断/会话绑定逻辑与“真实上游错误状态码”保持一致。
+       * 以便让故障转移/熔断/会话绑定逻辑与”真实上游错误状态码”保持一致。
        */
       statusCodeInferred?: boolean;
       /**
@@ -71,11 +71,21 @@ export class ProxyError extends Error {
        * 仅供标准客户端错误响应在系统开关允许时使用，不进入详细日志/规则匹配。
        */
       safeClientMessageCandidate?: string;
+
+      /**
+       * 上游响应头（用于智能错误分类）。
+       *
+       * 设计目标：
+       * - 用于智能错误分类器分析 429/401/403 等特殊状态码
+       * - 提取 Retry-After、X-RateLimit-Scope 等关键头部
+       * - 不参与持久化（仅用于运行时决策）
+       */
+      headers?: Record<string, string>;
     },
     isLocalAbort: boolean = false
   ) {
     super(message);
-    this.name = "ProxyError";
+    this.name = “ProxyError”;
     this.isLocalAbort = isLocalAbort;
   }
 
@@ -87,6 +97,7 @@ export class ProxyError extends Error {
    * 2. 识别 Content-Type 并解析 JSON
    * 3. 从 JSON 提取错误消息（支持多种格式）
    * 4. 智能截断（JSON 完整，文本 500 字符）
+   * 5. 提取响应头（用于智能错误分类）
    */
   static async fromUpstreamResponse(
     response: Response,
@@ -125,12 +136,19 @@ export class ProxyError extends Error {
       ProxyError.extractRequestIdFromBody(parsed) ||
       ProxyError.extractRequestIdFromHeaders(response.headers);
 
+    // 6. 提取响应头（用于智能错误分类）
+    const headers: Record<string, string> = {};
+    response.headers.forEach((value, key) => {
+      headers[key.toLowerCase()] = value;
+    });
+
     return new ProxyError(message, response.status, {
       body: truncatedBody,
       parsed,
       providerId: provider.id,
       providerName: provider.name,
       requestId,
+      headers,
     });
   }
 
@@ -950,7 +968,7 @@ export function isEmptyResponseError(error: unknown): error is EmptyResponseErro
 }
 
 /**
- * 判断错误类型（异步版本）
+ * 判断错误类型（异步版本 - 增强版，集成 ccLoad 智能分类器）
  *
  * 分类规则（优先级从高到低）：
  * 1. 上游服务端错误（真实 HTTP ProxyError 500-599）
