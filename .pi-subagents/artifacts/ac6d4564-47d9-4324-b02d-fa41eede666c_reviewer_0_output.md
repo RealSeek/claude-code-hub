@@ -1,0 +1,1 @@
+The artifact will state that the literal error string is not in the checked code, so the server-side symptom is a successful empty model list after matched providers return no fetched models. That matters because several failures are currently collapsed to the same empty response.

@@ -1,0 +1,12 @@
+{
+  "id": "fix-claude-models-upstream",
+  "title": "修复 Claude /v1/models 上游模型列表为空的问题",
+  "status": "in_progress",
+  "strategy": "debug-investigate",
+  "currentPhase": "1",
+  "nextAction": "定位 /v1/models 的 Claude provider 选择、上游拉取和本地配置回退行为",
+  "gate": null,
+  "branch": "main",
+  "scope": "fix-claude-models-upstream",
+  "createdAt": "2026-07-09T08:17:42Z"
+}

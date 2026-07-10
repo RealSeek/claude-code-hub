@@ -28,7 +28,7 @@ export class ProxyError extends Error {
        * 上游响应体（智能截断）。
        *
        * 注意：该字段会进入 getDetailedErrorMessage()，并被记录到数据库中，
-       * 因此不要在这里放入“大段原文”或未脱敏的敏感内容。
+       * 因此不要在这里放入”大段原文”或未脱敏的敏感内容。
        */
       body: string;
       parsed?: unknown; // 解析后的 JSON（如果有）
@@ -40,19 +40,19 @@ export class ProxyError extends Error {
        * 上游响应体原文（通常为前缀片段）。
        *
        * 设计目标：
-       * - 仅用于“本次错误响应”返回给客户端（受系统设置控制）；
+       * - 仅用于”本次错误响应”返回给客户端（受系统设置控制）；
        * - 不参与规则匹配与持久化（避免污染数据库/日志）。
        *
-       * 目前主要用于“假 200”检测：HTTP 状态码为 2xx，但 body 实际为错误页/错误 JSON。
+       * 目前主要用于”假 200”检测：HTTP 状态码为 2xx，但 body 实际为错误页/错误 JSON。
        */
       rawBody?: string;
       rawBodyTruncated?: boolean;
 
       /**
-       * 标记该 ProxyError 的 statusCode 是否由“响应体内容”推断得出（而非上游真实 HTTP 状态码）。
+       * 标记该 ProxyError 的 statusCode 是否由”响应体内容”推断得出（而非上游真实 HTTP 状态码）。
        *
        * 典型场景：上游返回 HTTP 200，但 body 为错误页/错误 JSON（假 200）。此时 CCH 会根据响应体内容推断更贴近语义的 4xx/5xx，
-       * 以便让故障转移/熔断/会话绑定逻辑与“真实上游错误状态码”保持一致。
+       * 以便让故障转移/熔断/会话绑定逻辑与”真实上游错误状态码”保持一致。
        */
       statusCodeInferred?: boolean;
       /**
@@ -66,11 +66,21 @@ export class ProxyError extends Error {
        * 仅供标准客户端错误响应在系统开关允许时使用，不进入详细日志/规则匹配。
        */
       safeClientMessageCandidate?: string;
+
+      /**
+       * 上游响应头（用于智能错误分类）。
+       *
+       * 设计目标：
+       * - 用于智能错误分类器分析 429/401/403 等特殊状态码
+       * - 提取 Retry-After、X-RateLimit-Scope 等关键头部
+       * - 不参与持久化（仅用于运行时决策）
+       */
+      headers?: Record<string, string>;
     },
     isLocalAbort: boolean = false
   ) {
     super(message);
-    this.name = "ProxyError";
+    this.name = “ProxyError”;
     this.isLocalAbort = isLocalAbort;
   }
 
@@ -82,6 +92,7 @@ export class ProxyError extends Error {
    * 2. 识别 Content-Type 并解析 JSON
    * 3. 从 JSON 提取错误消息（支持多种格式）
    * 4. 智能截断（JSON 完整，文本 500 字符）
+   * 5. 提取响应头（用于智能错误分类）
    */
   static async fromUpstreamResponse(
     response: Response,
@@ -120,12 +131,19 @@ export class ProxyError extends Error {
       ProxyError.extractRequestIdFromBody(parsed) ||
       ProxyError.extractRequestIdFromHeaders(response.headers);
 
+    // 6. 提取响应头（用于智能错误分类）
+    const headers: Record<string, string> = {};
+    response.headers.forEach((value, key) => {
+      headers[key.toLowerCase()] = value;
+    });
+
     return new ProxyError(message, response.status, {
       body: truncatedBody,
       parsed,
       providerId: provider.id,
       providerName: provider.name,
       requestId,
+      headers,
     });
   }
 
@@ -897,7 +915,7 @@ export function isEmptyResponseError(error: unknown): error is EmptyResponseErro
 }
 
 /**
- * 判断错误类型（异步版本）
+ * 判断错误类型（异步版本 - 增强版，集成 ccLoad 智能分类器）
  *
  * 分类规则（优先级从高到低）：
  * 1. 客户端主动中断（AbortError 或 error.code === 'ECONNRESET' 且 statusCode === 499）
@@ -906,21 +924,20 @@ export function isEmptyResponseError(error: unknown): error is EmptyResponseErro
  *    → 不应重试（客户端已经不想要结果了）
  *    → 应立即返回错误
  *
- * 2. 不可重试的客户端输入错误（Prompt 超限、内容过滤、PDF 限制、Thinking 参数格式错误、参数缺失、非法请求）
+ * 2. Native transport errors（DNS、连接、超时等）
+ *    → 网络层面的传输错误
+ *    → 不应计入熔断器（不是供应商服务不可用）
+ *    → 应先重试1次当前供应商（可能是临时网络抖动）
+ *
+ * 3. ProxyError - 使用智能分类器（状态码 + headers + 响应体）
+ *    → Channel 级错误（5xx、长时间限流、账户封禁）→ PROVIDER_ERROR
+ *    → Key 级错误（429、401、403、404 等）→ PROVIDER_ERROR 或 RESOURCE_NOT_FOUND
+ *    → Client 级错误（408、413 等）→ 检查是否为不可重试错误
+ *
+ * 4. 不可重试的客户端输入错误（Prompt 超限、内容过滤、PDF 限制等）
  *    → 客户端输入违反了 API 的硬性限制或安全策略
  *    → 不应计入熔断器（不是供应商故障）
  *    → 不应重试（重试也会失败）
- *    → 应立即返回错误，提示用户修正输入
- *
- * 3. 供应商问题（ProxyError - 所有 4xx/5xx HTTP 错误）
- *    → 说明请求到达供应商并得到响应，但供应商无法正常处理
- *    → 应计入熔断器，连续失败时触发熔断保护
- *    → 应直接切换到其他供应商
- *
- * 4. 系统/网络问题（fetch 网络异常）
- *    → 包括：DNS 解析失败、连接被拒绝、连接超时、网络中断等
- *    → 不应计入供应商熔断器（不是供应商服务不可用）
- *    → 应先重试1次当前供应商（可能是临时网络抖动）
  *
  * 此函数会确保错误规则已加载后再进行检测
  *
@@ -939,27 +956,77 @@ export async function categorizeErrorAsync(error: Error): Promise<ErrorCategory>
     return ErrorCategory.SYSTEM_ERROR;
   }
 
-  // 优先级 2: 不可重试的客户端输入错误检测（白名单模式）
+  // 优先级 2: ProxyError → 使用智能分类器（ccLoad 表驱动设计）
+  if (error instanceof ProxyError) {
+    // 动态导入智能分类器（避免循环依赖）
+    const { classifyHTTPResponse, ErrorLevel } = await import("./error-classifier");
+
+    // 构建 Headers 对象
+    const headers = new Headers();
+    if (error.upstreamError?.headers) {
+      for (const [key, value] of Object.entries(error.upstreamError.headers)) {
+        headers.set(key, value);
+      }
+    }
+
+    const body = error.upstreamError?.body || null;
+
+    // 调用智能分类器
+    const classification = classifyHTTPResponse(error.statusCode, headers, body);
+
+    // 记录分类结果（用于调试和监控）
+    if (classification.reason) {
+      logger.debug("[ErrorClassifier] Smart classification applied", {
+        statusCode: error.statusCode,
+        level: classification.level,
+        reason: classification.reason,
+        providerId: error.upstreamError?.providerId,
+        providerName: error.upstreamError?.providerName,
+      });
+    }
+
+    // 映射 ErrorLevel → ErrorCategory
+    switch (classification.level) {
+      case ErrorLevel.Channel:
+        // Channel 级错误 → PROVIDER_ERROR（触发重试和故障转移）
+        // 包括：5xx、长时间限流、账户封禁等
+        return ErrorCategory.PROVIDER_ERROR;
+
+      case ErrorLevel.Key:
+        // Key 级错误需要进一步区分
+        if (error.statusCode === 404) {
+          // 404 特殊处理 - 不计入熔断器，仅触发故障切换
+          return ErrorCategory.RESOURCE_NOT_FOUND;
+        }
+        // 其他 Key 级错误（429、401、403 等）→ PROVIDER_ERROR
+        return ErrorCategory.PROVIDER_ERROR;
+
+      case ErrorLevel.Client:
+        // Client 级错误（408、413 等）→ 检查是否为不可重试错误
+        if (await isNonRetryableClientErrorAsync(error)) {
+          return ErrorCategory.NON_RETRYABLE_CLIENT_ERROR;
+        }
+        // 如果不是不可重试错误，仍然尝试故障转移
+        return ErrorCategory.PROVIDER_ERROR;
+
+      default:
+        // 未知级别，保守策略：视为 Provider 错误
+        return ErrorCategory.PROVIDER_ERROR;
+    }
+  }
+
+  // 优先级 3: 不可重试的客户端输入错误检测（白名单模式）
   // 使用异步版本确保错误规则已加载
   if (await isNonRetryableClientErrorAsync(error)) {
     return ErrorCategory.NON_RETRYABLE_CLIENT_ERROR; // 客户端输入错误
   }
 
-  // 优先级 3: ProxyError = HTTP 错误（4xx 或 5xx）
-  if (error instanceof ProxyError) {
-    // 优先级 3.1: 404 错误特殊处理 - 不计入熔断器，仅触发故障切换
-    if (error.statusCode === 404) {
-      return ErrorCategory.RESOURCE_NOT_FOUND; // 上游资源不存在
-    }
-    return ErrorCategory.PROVIDER_ERROR; // 其他 HTTP 错误都是供应商问题
-  }
-
-  // 优先级 3.2: 空响应错误 - 计入熔断器 + 触发故障切换
+  // 优先级 4: 空响应错误 - 计入熔断器 + 触发故障切换
   if (error instanceof EmptyResponseError) {
     return ErrorCategory.PROVIDER_ERROR; // 空响应视为供应商问题
   }
 
-  // 优先级 4: 其他所有错误都是系统错误
+  // 优先级 5: 其他所有错误都是系统错误
   // 包括：
   // - TypeError: fetch failed (网络层错误)
   // - ENOTFOUND: DNS 解析失败
