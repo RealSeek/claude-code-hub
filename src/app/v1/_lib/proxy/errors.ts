@@ -80,7 +80,7 @@ export class ProxyError extends Error {
     isLocalAbort: boolean = false
   ) {
     super(message);
-    this.name = “ProxyError”;
+    this.name = "ProxyError";
     this.isLocalAbort = isLocalAbort;
   }
 
