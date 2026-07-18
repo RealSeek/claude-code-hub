@@ -22,7 +22,8 @@
       "options": {
         "auto": "自動識別",
         "newApi": "New-API（帳戶餘額與 Token 分組倍率）",
-        "sub2api": "sub2api（餘額與倍率）"
+        "sub2api": "sub2api（餘額與倍率）",
+        "official": "官方渠道（不查詢餘額與倍率）"
       }
     },
     "upstreamBillingRefreshInterval": {
@@ -43,7 +44,33 @@
         "placeholder": "輸入完整 Session Cookie",
         "leaveEmpty": "留空保留目前 Cookie",
         "show": "顯示 Session Cookie",
-        "hide": "隱藏 Session Cookie"
+        "hide": "隱藏 Session Cookie",
+        "invalidWarning": "最近一次餘額與倍率同步顯示 New-API Cookie 已失效或驗證被拒絕。請填寫新的 Cookie，並核對使用者 ID。"
+      },
+      "accessTokenInvalidWarning": "最近一次餘額與倍率同步顯示 New-API Access Token 已失效或驗證被拒絕。請改用有效的 Session Cookie，並核對使用者 ID。"
+    },
+    "sub2apiAccount": {
+      "authToken": {
+        "label": "sub2api Auth Token（可選）",
+        "desc": "新版計費介面不可用時，用於透過使用者介面取得目前 Key 的分組倍率",
+        "configured": "已設定 Auth Token；留空將保留目前值",
+        "placeholder": "輸入 auth_token",
+        "leaveEmpty": "留空保留目前 Auth Token",
+        "clear": "清除已設定的 Auth Token",
+        "cleared": "儲存後將清除目前 Auth Token；輸入新值可改為取代",
+        "show": "顯示 Auth Token",
+        "hide": "隱藏 Auth Token"
+      },
+      "refreshToken": {
+        "label": "sub2api Refresh Token（可選）",
+        "desc": "Auth Token 失效時自動重新整理並儲存輪換後的權杖",
+        "configured": "已設定 Refresh Token；留空將保留目前值",
+        "placeholder": "輸入 refresh_token",
+        "leaveEmpty": "留空保留目前 Refresh Token",
+        "clear": "清除已設定的 Refresh Token",
+        "cleared": "儲存後將清除目前 Refresh Token；輸入新值可改為取代",
+        "show": "顯示 Refresh Token",
+        "hide": "隱藏 Refresh Token"
       }
     }
   },

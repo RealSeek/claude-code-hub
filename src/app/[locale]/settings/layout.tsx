@@ -33,7 +33,7 @@ export default async function SettingsLayout({
   return (
     <div className="min-h-[var(--cch-viewport-height,100vh)] bg-background">
       <DashboardHeader session={session} locale={locale} />
-      <main className="mx-auto w-full max-w-7xl px-4 py-6 md:px-6 md:py-8 pb-24 md:pb-8">
+      <main className="mx-auto w-full max-w-[1600px] px-4 py-6 md:px-6 md:py-8 pb-24 md:pb-8">
         <div className="space-y-6">
           {/* Desktop: Grid layout with sidebar */}
           <div className="lg:grid lg:gap-6 lg:grid-cols-[220px_1fr]">

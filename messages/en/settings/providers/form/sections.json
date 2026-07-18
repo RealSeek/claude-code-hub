@@ -22,7 +22,8 @@
       "options": {
         "auto": "Auto-detect",
         "newApi": "New-API (account balance and token group multiplier)",
-        "sub2api": "sub2api (balance and multiplier)"
+        "sub2api": "sub2api (balance and multiplier)",
+        "official": "Official channel (no balance or multiplier query)"
       }
     },
     "upstreamBillingRefreshInterval": {
@@ -43,7 +44,33 @@
         "placeholder": "Enter the full session cookie",
         "leaveEmpty": "Leave blank to keep the current cookie",
         "show": "Show session cookie",
-        "hide": "Hide session cookie"
+        "hide": "Hide session cookie",
+        "invalidWarning": "The latest balance and multiplier sync shows that the New-API cookie has expired or authentication was rejected. Enter a new cookie and verify the user ID."
+      },
+      "accessTokenInvalidWarning": "The latest balance and multiplier sync shows that the New-API access token has expired or authentication was rejected. Use a valid session cookie and verify the user ID."
+    },
+    "sub2apiAccount": {
+      "authToken": {
+        "label": "sub2api auth token (optional)",
+        "desc": "Used to resolve the selected key's group multiplier when the newer billing endpoint is unavailable",
+        "configured": "Auth token configured; leave blank to keep the current value",
+        "placeholder": "Enter auth_token",
+        "leaveEmpty": "Leave blank to keep the current auth token",
+        "clear": "Clear the configured auth token",
+        "cleared": "The current auth token will be cleared on save; enter a new value to replace it instead",
+        "show": "Show auth token",
+        "hide": "Hide auth token"
+      },
+      "refreshToken": {
+        "label": "sub2api refresh token (optional)",
+        "desc": "Automatically refreshes an expired auth token and stores the rotated tokens",
+        "configured": "Refresh token configured; leave blank to keep the current value",
+        "placeholder": "Enter refresh_token",
+        "leaveEmpty": "Leave blank to keep the current refresh token",
+        "clear": "Clear the configured refresh token",
+        "cleared": "The current refresh token will be cleared on save; enter a new value to replace it instead",
+        "show": "Show refresh token",
+        "hide": "Hide refresh token"
       }
     }
   },

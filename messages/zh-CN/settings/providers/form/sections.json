@@ -22,7 +22,8 @@
       "options": {
         "auto": "自动识别",
         "newApi": "New-API（账户余额与 Token 分组倍率）",
-        "sub2api": "sub2api（余额与倍率）"
+        "sub2api": "sub2api（余额与倍率）",
+        "official": "官方渠道（不查询余额与倍率）"
       }
     },
     "upstreamBillingRefreshInterval": {
@@ -43,7 +44,33 @@
         "placeholder": "输入完整 Session Cookie",
         "leaveEmpty": "留空保持当前 Cookie",
         "show": "显示 Session Cookie",
-        "hide": "隐藏 Session Cookie"
+        "hide": "隐藏 Session Cookie",
+        "invalidWarning": "最近一次余额与倍率同步表明 New-API Cookie 已失效或认证被拒绝。请填写新的 Cookie，并核对用户 ID。"
+      },
+      "accessTokenInvalidWarning": "最近一次余额与倍率同步表明 New-API Access Token 已失效或认证被拒绝。请改用有效的 Session Cookie，并核对用户 ID。"
+    },
+    "sub2apiAccount": {
+      "authToken": {
+        "label": "sub2api Auth Token（可选）",
+        "desc": "新版计费接口不可用时，用于通过用户接口兜底获取当前 Key 的分组倍率",
+        "configured": "已配置 Auth Token；留空将保持当前值",
+        "placeholder": "输入 auth_token",
+        "leaveEmpty": "留空保持当前 Auth Token",
+        "clear": "清除已配置的 Auth Token",
+        "cleared": "保存后将清除当前 Auth Token；输入新值可改为替换",
+        "show": "显示 Auth Token",
+        "hide": "隐藏 Auth Token"
+      },
+      "refreshToken": {
+        "label": "sub2api Refresh Token（可选）",
+        "desc": "Auth Token 失效时自动刷新并保存轮换后的令牌",
+        "configured": "已配置 Refresh Token；留空将保持当前值",
+        "placeholder": "输入 refresh_token",
+        "leaveEmpty": "留空保持当前 Refresh Token",
+        "clear": "清除已配置的 Refresh Token",
+        "cleared": "保存后将清除当前 Refresh Token；输入新值可改为替换",
+        "show": "显示 Refresh Token",
+        "hide": "隐藏 Refresh Token"
       }
     }
   },

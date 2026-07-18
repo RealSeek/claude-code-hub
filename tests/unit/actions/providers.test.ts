@@ -22,6 +22,7 @@ const emitActionAuditMock = vi.fn();
 const loggerTraceMock = vi.fn();
 const loggerDebugMock = vi.fn();
 const loggerWarnMock = vi.fn();
+const syncProviderCostMultiplierMock = vi.fn(async () => ({ ok: true }));
 
 vi.mock("@/lib/auth", () => ({
   getSession: getSessionMock,
@@ -76,6 +77,10 @@ vi.mock("@/lib/audit/emit", () => ({
   emitActionAudit: emitActionAuditMock,
 }));
 
+vi.mock("@/actions/provider-upstream-billing", () => ({
+  syncProviderCostMultiplier: syncProviderCostMultiplierMock,
+}));
+
 vi.mock("next/cache", () => ({
   revalidatePath: revalidatePathMock,
 }));
@@ -121,6 +126,7 @@ describe("Provider Actions - Async Optimization", () => {
         groupTag: "default",
         upstreamBillingType: "new-api",
         upstreamBillingAccessToken: "account-secret-token",
+        upstreamBillingRefreshToken: "account-secret-refresh-token",
         upstreamBillingCookie: "session=account-secret-cookie",
         upstreamBillingUserId: "42",
         providerType: "claude",
@@ -205,10 +211,12 @@ describe("Provider Actions - Async Optimization", () => {
       expect(result[0]?.id).toBe(1);
       expect(result[0]).toMatchObject({
         hasUpstreamBillingAccessToken: true,
+        hasUpstreamBillingRefreshToken: true,
         hasUpstreamBillingCookie: true,
         upstreamBillingUserId: "42",
       });
       expect(result[0]).not.toHaveProperty("upstreamBillingAccessToken");
+      expect(result[0]).not.toHaveProperty("upstreamBillingRefreshToken");
       expect(result[0]).not.toHaveProperty("upstreamBillingCookie");
       expect(getProviderStatisticsMock).not.toHaveBeenCalled();
     });
@@ -642,6 +650,36 @@ describe("Provider Actions - Async Optimization", () => {
         error: "New-API 需要 Session Cookie（或 Access Token）和用户 ID",
       });
       expect(updateProviderMock).not.toHaveBeenCalled();
+    });
+
+    it("更新 New-API Cookie 后异步重新探测上游计费状态", async () => {
+      const { editProvider } = await import("@/actions/providers");
+      const result = await editProvider(1, {
+        upstream_billing_cookie: "session=replacement-cookie",
+      });
+
+      expect(result.ok).toBe(true);
+      expect(syncProviderCostMultiplierMock).toHaveBeenCalledWith(1);
+    });
+
+    it("更新 sub2api 可选令牌后原样交给仓库并异步重新探测", async () => {
+      const { editProvider } = await import("@/actions/providers");
+      const result = await editProvider(1, {
+        upstream_billing_type: "sub2api",
+        upstream_billing_access_token: "access-test",
+        upstream_billing_refresh_token: "refresh-test",
+      });
+
+      expect(result.ok).toBe(true);
+      expect(updateProviderMock).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({
+          upstream_billing_type: "sub2api",
+          upstream_billing_access_token: "access-test",
+          upstream_billing_refresh_token: "refresh-test",
+        })
+      );
+      expect(syncProviderCostMultiplierMock).toHaveBeenCalledWith(1);
     });
 
     it("editProvider endpoint sync: should forward url/provider_type edits to repository", async () => {

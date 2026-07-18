@@ -24,7 +24,8 @@ export async function getProviderUpstreamBillingBatch(
 
   const uniqueIds = [...new Set(providerIds)];
   const providers = (await Promise.all(uniqueIds.map((id) => findProviderById(id)))).filter(
-    (provider): provider is Provider => provider !== null
+    (provider): provider is Provider =>
+      provider !== null && provider.upstreamBillingType !== "official"
   );
 
   const items = await mapWithConcurrency(
@@ -68,6 +69,9 @@ export async function syncProviderCostMultiplier(
 
   const provider = await findProviderById(providerId);
   if (!provider) return { ok: false, error: "供应商不存在" };
+  if (provider.upstreamBillingType === "official") {
+    return { ok: false, error: "官方渠道不查询上游余额和倍率" };
+  }
 
   const refreshed = await refreshProviderUpstreamBilling(providerId, {
     source: "manual",

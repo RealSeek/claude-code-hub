@@ -6,6 +6,8 @@
   "upstreamBalanceUnavailable": "未提供余额",
   "upstreamBillingError": "查询失败",
   "upstreamBillingCredentialsMissing": "请先配置 New-API 账户凭据",
+  "upstreamBillingCookieInvalid": "New-API Cookie 已失效或认证被拒绝，请更新 Cookie 并核对用户 ID",
+  "upstreamBillingAccessTokenInvalid": "New-API Access Token 已失效或认证被拒绝",
   "upstreamBillingPartial": "部分 Key 探测成功，余额未汇总",
   "upstreamBillingKeySum": "多 Key 合计（可能存在共享账户）",
   "todayUsageLabel": "今日用量",

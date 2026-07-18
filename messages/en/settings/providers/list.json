@@ -12,6 +12,8 @@
   "upstreamBalanceUnavailable": "Balance unavailable",
   "upstreamBillingError": "Query failed",
   "upstreamBillingCredentialsMissing": "Configure New-API account credentials first",
+  "upstreamBillingCookieInvalid": "New-API cookie has expired or authentication was rejected; update the cookie and verify the user ID",
+  "upstreamBillingAccessTokenInvalid": "New-API access token has expired or authentication was rejected",
   "upstreamBillingPartial": "Some keys failed; balance is not aggregated",
   "upstreamBillingKeySum": "Sum of multiple keys (shared accounts may double-count)",
   "deleteButton": "Delete",

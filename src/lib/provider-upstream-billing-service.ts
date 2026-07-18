@@ -14,6 +14,7 @@ import {
   claimProviderUpstreamBillingRefresh,
   findProviderById,
   updateProviderUpstreamBillingSnapshot,
+  updateProviderUpstreamBillingTokens,
 } from "@/repository/provider";
 import type { Provider } from "@/types/provider";
 
@@ -45,38 +46,43 @@ function toProbeConfig(
     customHeaders: provider.customHeaders,
     upstreamBillingType: provider.upstreamBillingType,
     upstreamBillingAccessToken: provider.upstreamBillingAccessToken,
+    upstreamBillingRefreshToken: provider.upstreamBillingRefreshToken,
     upstreamBillingCookie: provider.upstreamBillingCookie,
     upstreamBillingUserId: provider.upstreamBillingUserId,
+    persistSub2ApiTokens: async (accessToken, refreshToken) => {
+      const saved = await updateProviderUpstreamBillingTokens(
+        provider.id,
+        accessToken,
+        refreshToken
+      );
+      if (!saved) throw new Error("供应商上游计费令牌保存失败");
+    },
   };
 }
 
 function toProviderProbeConfigs(provider: Provider): ProviderUpstreamBillingConfig[] {
+  if (provider.upstreamBillingType === "official") return [];
   const keys = enabledProviderApiKeys(provider);
-  if (provider.upstreamBillingType === "new-api") {
-    if (keys.length > 0) {
-      const primary = keys[0];
-      return [
-        {
-          ...toProbeConfig(provider, { id: null, key: primary.key, label: null }),
-          providerKeys: keys.map((key) => ({ id: key.id, key: key.key, label: key.label })),
-        },
-      ];
-    }
-    if ((provider.apiKeys ?? []).length > 0) return [];
+  if (keys.length > 0) {
+    const primary = keys[0];
     return [
       {
-        ...toProbeConfig(provider, { id: null, key: provider.key, label: null }),
-        providerKeys: [{ id: null, key: provider.key, label: "legacy" }],
+        ...toProbeConfig(provider, {
+          id: primary.id,
+          key: primary.key,
+          label: primary.label,
+        }),
+        providerKeys: [{ id: primary.id, key: primary.key, label: primary.label }],
       },
     ];
   }
-  if (keys.length > 0) {
-    return keys.map((key) =>
-      toProbeConfig(provider, { id: key.id, key: key.key, label: key.label })
-    );
-  }
   if ((provider.apiKeys ?? []).length > 0) return [];
-  return [toProbeConfig(provider, { id: null, key: provider.key, label: "legacy" })];
+  return [
+    {
+      ...toProbeConfig(provider, { id: null, key: provider.key, label: "legacy" }),
+      providerKeys: [{ id: null, key: provider.key, label: "legacy" }],
+    },
+  ];
 }
 
 function toKeyResult(result: ProviderUpstreamBillingResult): ProviderUpstreamBillingKeyResult {
@@ -136,19 +142,24 @@ export async function probeProviderBilling(
   const keyResults = await mapWithConcurrency(configs, MAX_CONCURRENT_PROBES, async (config) =>
     toKeyResult(await probeProviderUpstreamBilling(config))
   );
-  if (configs.length === 1 && configs[0]?.keyId == null && keyResults[0]) {
-    const legacy = keyResults[0];
+  if (configs.length === 1 && keyResults[0]) {
+    const only = keyResults[0];
+    const recognized = only.status === "ok" || only.status === "partial";
     return {
       providerId: provider.id,
-      source: legacy.source,
-      status: legacy.status,
-      balanceUsd: legacy.balanceUsd,
-      balanceRaw: legacy.balanceRaw,
-      balanceScope: legacy.balanceScope ?? null,
-      quotaPerUnit: legacy.quotaPerUnit,
-      effectiveMultiplier: legacy.effectiveMultiplier,
-      observedAt: legacy.observedAt,
-      errorCode: legacy.errorCode,
+      source: only.source,
+      status: only.status,
+      balanceUsd: only.balanceUsd,
+      balanceRaw: only.balanceRaw,
+      balanceScope: only.balanceScope ?? null,
+      quotaPerUnit: only.quotaPerUnit,
+      effectiveMultiplier: only.effectiveMultiplier,
+      observedAt: only.observedAt,
+      errorCode: only.errorCode,
+      balanceAggregation: only.balanceUsd !== null ? "single_key" : "unavailable",
+      successfulKeyCount: recognized ? 1 : 0,
+      failedKeyCount: recognized ? 0 : 1,
+      keys: [only],
     };
   }
 
@@ -252,6 +263,15 @@ export async function refreshProviderUpstreamBilling(
       billing: null,
       multiplierSynced: false,
       previousMultiplier: null,
+    };
+  }
+
+  if (provider.upstreamBillingType === "official") {
+    return {
+      refreshed: false,
+      billing: null,
+      multiplierSynced: false,
+      previousMultiplier: provider.costMultiplier,
     };
   }
 

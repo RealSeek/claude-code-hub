@@ -12,6 +12,8 @@
   "upstreamBalanceUnavailable": "未提供餘額",
   "upstreamBillingError": "查詢失敗",
   "upstreamBillingCredentialsMissing": "請先設定 New-API 帳戶憑證",
+  "upstreamBillingCookieInvalid": "New-API Cookie 已失效或驗證被拒絕，請更新 Cookie 並核對使用者 ID",
+  "upstreamBillingAccessTokenInvalid": "New-API Access Token 已失效或驗證被拒絕",
   "upstreamBillingPartial": "部分 Key 探測成功，未彙總餘額",
   "upstreamBillingKeySum": "多 Key 合計（共享帳戶可能重複計算）",
   "deleteButton": "刪除",

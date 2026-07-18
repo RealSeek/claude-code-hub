@@ -350,6 +350,7 @@ export async function getProviders(): Promise<ProviderDisplay[]> {
         groupTag: provider.groupTag,
         upstreamBillingType: provider.upstreamBillingType,
         hasUpstreamBillingAccessToken: Boolean(provider.upstreamBillingAccessToken),
+        hasUpstreamBillingRefreshToken: Boolean(provider.upstreamBillingRefreshToken),
         hasUpstreamBillingCookie: Boolean(provider.upstreamBillingCookie),
         upstreamBillingUserId: provider.upstreamBillingUserId,
         upstreamBillingRefreshIntervalMinutes: provider.upstreamBillingRefreshIntervalMinutes,
@@ -564,6 +565,7 @@ export async function addProvider(data: {
   group_tag?: string | null;
   upstream_billing_type?: ProviderUpstreamBillingType;
   upstream_billing_access_token?: string | null;
+  upstream_billing_refresh_token?: string | null;
   upstream_billing_cookie?: string | null;
   upstream_billing_user_id?: string | null;
   upstream_billing_refresh_interval_minutes?: number;
@@ -815,6 +817,7 @@ export async function editProvider(
     group_priorities?: Record<string, number> | null;
     upstream_billing_type?: ProviderUpstreamBillingType;
     upstream_billing_access_token?: string | null;
+    upstream_billing_refresh_token?: string | null;
     upstream_billing_cookie?: string | null;
     upstream_billing_user_id?: string | null;
     upstream_billing_refresh_interval_minutes?: number;
@@ -922,8 +925,14 @@ export async function editProvider(
     const updatesUpstreamBillingAccount =
       validated.upstream_billing_type !== undefined ||
       validated.upstream_billing_access_token !== undefined ||
+      validated.upstream_billing_refresh_token !== undefined ||
       validated.upstream_billing_cookie !== undefined ||
       validated.upstream_billing_user_id !== undefined;
+    const updatesUpstreamBillingProbeInput =
+      updatesUpstreamBillingAccount ||
+      validated.url !== undefined ||
+      validated.key !== undefined ||
+      validated.api_keys !== undefined;
     const nextUpstreamBillingType =
       validated.upstream_billing_type ?? currentProvider.upstreamBillingType;
     const nextUpstreamBillingAccessToken =
@@ -952,6 +961,7 @@ export async function editProvider(
       if (
         field === "key" ||
         field === "upstream_billing_access_token" ||
+        field === "upstream_billing_refresh_token" ||
         field === "upstream_billing_cookie"
       ) {
         continue;
@@ -1061,7 +1071,7 @@ export async function editProvider(
     // 广播缓存更新（跨实例即时生效）
     await broadcastProviderCacheInvalidation({ operation: "edit", providerId });
 
-    if (payload.api_keys !== undefined) {
+    if (updatesUpstreamBillingProbeInput) {
       void syncProviderCostMultiplier(providerId).catch((error) => {
         logger.warn("editProvider:upstream_billing_sync_failed", {
           providerId,

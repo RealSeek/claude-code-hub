@@ -96,8 +96,10 @@ function makeProviderDisplay(overrides: Partial<ProviderDisplay> = {}): Provider
     groupTag: null,
     upstreamBillingType: "auto",
     hasUpstreamBillingAccessToken: false,
+    hasUpstreamBillingRefreshToken: false,
     hasUpstreamBillingCookie: false,
     upstreamBillingUserId: null,
+    upstreamBillingRefreshIntervalMinutes: 30,
     providerType: "claude",
     providerVendorId: null, // Default to null for legacy check
     preserveClientIp: false,
@@ -354,6 +356,91 @@ describe("ProviderRichListItem Endpoint Display", () => {
     expect(document.body.textContent).toContain("$2.50");
     expect(document.body.textContent).toContain("new-api · 0.1x");
     expect(document.body.textContent).not.toContain("Unlimited quota");
+
+    unmount();
+  });
+
+  test("New-API Cookie 失效时显示明确告警", async () => {
+    const provider = makeProviderDisplay({
+      upstreamBillingType: "new-api",
+      hasUpstreamBillingCookie: true,
+      upstreamBillingUserId: "42",
+    });
+    const { unmount } = renderWithProviders(
+      <ProviderRichListItem
+        provider={provider}
+        currentUser={ADMIN_USER}
+        upstreamBilling={{
+          providerId: provider.id,
+          source: "new-api",
+          status: "error",
+          balanceUsd: null,
+          balanceRaw: null,
+          quotaPerUnit: null,
+          effectiveMultiplier: null,
+          observedAt: "2026-07-19T00:00:00.000Z",
+          errorCode: "new_api_cookie_invalid",
+          balanceAggregation: "unavailable",
+        }}
+        enableMultiProviderTypes={true}
+      />
+    );
+
+    await flushTicks();
+    expect(document.body.textContent).toContain(
+      "New-API cookie has expired or authentication was rejected"
+    );
+    expect(document.body.textContent).not.toContain("Query failed");
+
+    unmount();
+  });
+
+  test("官方渠道不渲染上游余额与倍率区域", async () => {
+    const provider = makeProviderDisplay({ upstreamBillingType: "official" });
+    const { unmount } = renderWithProviders(
+      <ProviderRichListItem
+        provider={provider}
+        currentUser={ADMIN_USER}
+        upstreamBillingLoading={false}
+        upstreamBilling={{
+          providerId: provider.id,
+          source: "sub2api",
+          status: "ok",
+          balanceUsd: 12.5,
+          balanceRaw: 12.5,
+          quotaPerUnit: null,
+          effectiveMultiplier: 0.02,
+          observedAt: "2026-07-19T00:00:00.000Z",
+          errorCode: null,
+        }}
+        enableMultiProviderTypes={true}
+      />
+    );
+
+    await flushTicks();
+    expect(document.body.textContent).not.toContain("$12.50");
+    expect(document.body.textContent).not.toContain("sub2api");
+
+    unmount();
+  });
+
+  test("桌面指标组使用稳定宽度并靠右对齐", async () => {
+    const { unmount, container } = renderWithProviders(
+      <ProviderRichListItem
+        provider={makeProviderDisplay()}
+        currentUser={ADMIN_USER}
+        enableMultiProviderTypes={true}
+      />
+    );
+
+    await flushTicks();
+    const metrics = Array.from(container.querySelectorAll("div")).find(
+      (element) =>
+        element.classList.contains("ml-auto") &&
+        element.classList.contains("min-w-[270px]") &&
+        element.classList.contains("grid-cols-3")
+    );
+    expect(metrics).toBeDefined();
 
     unmount();
   });

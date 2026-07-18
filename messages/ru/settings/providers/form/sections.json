@@ -22,7 +22,8 @@
       "options": {
         "auto": "Автоопределение",
         "newApi": "New-API (баланс аккаунта и множитель группы токена)",
-        "sub2api": "sub2api (баланс и множитель)"
+        "sub2api": "sub2api (баланс и множитель)",
+        "official": "Официальный канал (без запроса баланса и множителя)"
       }
     },
     "upstreamBillingRefreshInterval": {
@@ -43,7 +44,33 @@
         "placeholder": "Введите полный Session Cookie",
         "leaveEmpty": "Оставьте пустым, чтобы сохранить текущий Cookie",
         "show": "Показать Session Cookie",
-        "hide": "Скрыть Session Cookie"
+        "hide": "Скрыть Session Cookie",
+        "invalidWarning": "Последняя синхронизация баланса и множителя показала, что Cookie New-API истек или аутентификация отклонена. Укажите новый Cookie и проверьте ID пользователя."
+      },
+      "accessTokenInvalidWarning": "Последняя синхронизация баланса и множителя показала, что Access Token New-API истек или аутентификация отклонена. Используйте действительный Session Cookie и проверьте ID пользователя."
+    },
+    "sub2apiAccount": {
+      "authToken": {
+        "label": "Auth Token sub2api (необязательно)",
+        "desc": "Используется для получения множителя группы выбранного ключа, если новый billing API недоступен",
+        "configured": "Auth Token настроен; оставьте поле пустым, чтобы сохранить текущее значение",
+        "placeholder": "Введите auth_token",
+        "leaveEmpty": "Оставьте пустым, чтобы сохранить Auth Token",
+        "clear": "Удалить настроенный Auth Token",
+        "cleared": "Текущий Auth Token будет удален при сохранении; введите новое значение для замены",
+        "show": "Показать Auth Token",
+        "hide": "Скрыть Auth Token"
+      },
+      "refreshToken": {
+        "label": "Refresh Token sub2api (необязательно)",
+        "desc": "Автоматически обновляет истекший Auth Token и сохраняет новые токены",
+        "configured": "Refresh Token настроен; оставьте поле пустым, чтобы сохранить текущее значение",
+        "placeholder": "Введите refresh_token",
+        "leaveEmpty": "Оставьте пустым, чтобы сохранить Refresh Token",
+        "clear": "Удалить настроенный Refresh Token",
+        "cleared": "Текущий Refresh Token будет удален при сохранении; введите новое значение для замены",
+        "show": "Показать Refresh Token",
+        "hide": "Скрыть Refresh Token"
       }
     }
   },

@@ -199,6 +199,14 @@ function ProviderRichListItemInner({
   const tTypes = useTranslations("settings.providers.types");
   const tList = useTranslations("settings.providers.list");
   const tBatchEdit = useTranslations("settings.providers.batchEdit");
+  const upstreamBillingErrorMessage =
+    upstreamBilling?.errorCode === "missing_new_api_account_credentials"
+      ? tList("upstreamBillingCredentialsMissing")
+      : upstreamBilling?.errorCode === "new_api_cookie_invalid"
+        ? tList("upstreamBillingCookieInvalid")
+        : upstreamBilling?.errorCode === "new_api_access_token_invalid"
+          ? tList("upstreamBillingAccessTokenInvalid")
+          : tList("upstreamBillingError");
   const tTimeout = useTranslations("settings.providers.form.sections.timeout");
   const tInline = useTranslations("settings.providers.inlineEdit");
 
@@ -692,34 +700,31 @@ function ProviderRichListItemInner({
           </div>
         </div>
 
-        {(upstreamBillingLoading || upstreamBilling != null) && (
-          <div className="flex items-center gap-2 text-xs md:hidden">
-            <span className="text-muted-foreground">{tList("upstreamBillingLabel")}:</span>
-            {upstreamBillingLoading ? (
-              <Skeleton className="h-4 w-20" />
-            ) : upstreamBilling?.status === "ok" || upstreamBilling?.status === "partial" ? (
-              <span className="font-medium tabular-nums">
-                {upstreamBilling.balanceUsd !== null
-                  ? formatCurrency(upstreamBilling.balanceUsd, "USD")
-                  : tList("upstreamBalanceUnavailable")}
-                {upstreamBilling.status === "partial"
-                  ? ` · ${tList("upstreamBillingPartial")}`
-                  : upstreamBilling.balanceAggregation === "sum_of_keys"
-                    ? ` · ${tList("upstreamBillingKeySum")}`
+        {provider.upstreamBillingType !== "official" &&
+          (upstreamBillingLoading || upstreamBilling != null) && (
+            <div className="flex items-center gap-2 text-xs md:hidden">
+              <span className="text-muted-foreground">{tList("upstreamBillingLabel")}:</span>
+              {upstreamBillingLoading ? (
+                <Skeleton className="h-4 w-20" />
+              ) : upstreamBilling?.status === "ok" || upstreamBilling?.status === "partial" ? (
+                <span className="font-medium tabular-nums">
+                  {upstreamBilling.balanceUsd !== null
+                    ? formatCurrency(upstreamBilling.balanceUsd, "USD")
+                    : tList("upstreamBalanceUnavailable")}
+                  {upstreamBilling.status === "partial"
+                    ? ` · ${tList("upstreamBillingPartial")}`
+                    : upstreamBilling.balanceAggregation === "sum_of_keys"
+                      ? ` · ${tList("upstreamBillingKeySum")}`
+                      : ""}
+                  {upstreamBilling.effectiveMultiplier !== null
+                    ? ` · ${upstreamBilling.effectiveMultiplier}x`
                     : ""}
-                {upstreamBilling.effectiveMultiplier !== null
-                  ? ` · ${upstreamBilling.effectiveMultiplier}x`
-                  : ""}
-              </span>
-            ) : (
-              <span className="text-destructive">
-                {upstreamBilling?.errorCode === "missing_new_api_account_credentials"
-                  ? tList("upstreamBillingCredentialsMissing")
-                  : tList("upstreamBillingError")}
-              </span>
-            )}
-          </div>
-        )}
+                </span>
+              ) : (
+                <span className="text-destructive">{upstreamBillingErrorMessage}</span>
+              )}
+            </div>
+          )}
 
         {/* Mobile: actions */}
         <div className="flex items-center justify-end gap-2 md:hidden">
@@ -951,7 +956,7 @@ function ProviderRichListItemInner({
         </div>
 
         {/* Desktop: metrics */}
-        <div className="hidden md:grid grid-cols-3 gap-2 text-center flex-shrink-0">
+        <div className="ml-auto hidden min-w-[270px] flex-shrink-0 grid-cols-3 gap-2 text-center md:grid">
           <div className="rounded-md bg-muted/30 px-2.5 py-1.5">
             <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70">
               {tList("priority")}
@@ -1006,7 +1011,7 @@ function ProviderRichListItemInner({
               ) : (
                 <span>{provider.costMultiplier}x</span>
               )}
-              {canEdit && (
+              {canEdit && provider.upstreamBillingType !== "official" && (
                 <Tooltip delayDuration={200}>
                   <TooltipTrigger asChild>
                     <Button
@@ -1060,44 +1065,41 @@ function ProviderRichListItemInner({
           )}
         </div>
 
-        {(upstreamBillingLoading || upstreamBilling != null) && (
-          <div className="hidden lg:block text-center flex-shrink-0 min-w-[112px] rounded-md bg-muted/30 px-2.5 py-1.5">
-            <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70">
-              {tList("upstreamBillingLabel")}
-            </div>
-            {upstreamBillingLoading ? (
-              <>
-                <Skeleton className="h-5 w-16 mx-auto my-0.5" />
-                <Skeleton className="h-4 w-12 mx-auto mt-0.5" />
-              </>
-            ) : upstreamBilling?.status === "ok" || upstreamBilling?.status === "partial" ? (
-              <>
-                <div className="font-semibold text-sm tabular-nums">
-                  {upstreamBilling.balanceUsd !== null
-                    ? formatCurrency(upstreamBilling.balanceUsd, "USD")
-                    : tList("upstreamBalanceUnavailable")}
-                </div>
-                <div className="text-xs font-mono text-muted-foreground mt-0.5">
-                  {upstreamBilling.source}
-                  {upstreamBilling.status === "partial"
-                    ? ` · ${tList("upstreamBillingPartial")}`
-                    : upstreamBilling.balanceAggregation === "sum_of_keys"
-                      ? ` · ${tList("upstreamBillingKeySum")}`
-                      : ""}
-                  {upstreamBilling.effectiveMultiplier !== null
-                    ? ` · ${upstreamBilling.effectiveMultiplier}x`
-                    : ""}
-                </div>
-              </>
-            ) : (
-              <div className="text-xs text-destructive">
-                {upstreamBilling?.errorCode === "missing_new_api_account_credentials"
-                  ? tList("upstreamBillingCredentialsMissing")
-                  : tList("upstreamBillingError")}
+        {provider.upstreamBillingType !== "official" &&
+          (upstreamBillingLoading || upstreamBilling != null) && (
+            <div className="hidden lg:block text-center flex-shrink-0 min-w-[112px] rounded-md bg-muted/30 px-2.5 py-1.5">
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70">
+                {tList("upstreamBillingLabel")}
               </div>
-            )}
-          </div>
-        )}
+              {upstreamBillingLoading ? (
+                <>
+                  <Skeleton className="h-5 w-16 mx-auto my-0.5" />
+                  <Skeleton className="h-4 w-12 mx-auto mt-0.5" />
+                </>
+              ) : upstreamBilling?.status === "ok" || upstreamBilling?.status === "partial" ? (
+                <>
+                  <div className="font-semibold text-sm tabular-nums">
+                    {upstreamBilling.balanceUsd !== null
+                      ? formatCurrency(upstreamBilling.balanceUsd, "USD")
+                      : tList("upstreamBalanceUnavailable")}
+                  </div>
+                  <div className="text-xs font-mono text-muted-foreground mt-0.5">
+                    {upstreamBilling.source}
+                    {upstreamBilling.status === "partial"
+                      ? ` · ${tList("upstreamBillingPartial")}`
+                      : upstreamBilling.balanceAggregation === "sum_of_keys"
+                        ? ` · ${tList("upstreamBillingKeySum")}`
+                        : ""}
+                    {upstreamBilling.effectiveMultiplier !== null
+                      ? ` · ${upstreamBilling.effectiveMultiplier}x`
+                      : ""}
+                  </div>
+                </>
+              ) : (
+                <div className="text-xs text-destructive">{upstreamBillingErrorMessage}</div>
+              )}
+            </div>
+          )}
 
         {/* Desktop: action buttons */}
         <div className="hidden md:flex items-center gap-1 flex-shrink-0">
@@ -1211,6 +1213,7 @@ function ProviderRichListItemInner({
               <ProviderForm
                 mode="edit"
                 provider={provider}
+                upstreamBilling={upstreamBilling}
                 onSuccess={() => {
                   setOpenEdit(false);
                 }}

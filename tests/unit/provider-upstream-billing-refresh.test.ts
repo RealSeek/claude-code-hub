@@ -44,6 +44,7 @@ const provider = {
   costMultiplier: 1,
   upstreamBillingType: "sub2api",
   upstreamBillingAccessToken: null,
+  upstreamBillingRefreshToken: null,
   upstreamBillingCookie: null,
   upstreamBillingUserId: null,
   upstreamBillingRefreshIntervalMinutes: 30,
@@ -93,7 +94,11 @@ describe("provider upstream billing refresh service", () => {
   it("sub2api 成功时同时保存余额快照并同步可靠倍率", async () => {
     const result = await refreshProviderUpstreamBilling(7, { source: "request" });
 
-    expect(mockUpdateSnapshot).toHaveBeenCalledWith(7, billing, 0.5);
+    expect(mockUpdateSnapshot).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({ ...billing, balanceAggregation: "single_key" }),
+      0.5
+    );
     expect(mockClearConfigCache).toHaveBeenCalledWith(7);
     expect(mockPublishInvalidation).toHaveBeenCalledOnce();
     expect(result).toMatchObject({ refreshed: true, multiplierSynced: true });
@@ -118,7 +123,11 @@ describe("provider upstream billing refresh service", () => {
 
     const result = await refreshProviderUpstreamBilling(7, { source: "request" });
 
-    expect(mockUpdateSnapshot).toHaveBeenCalledWith(7, newApiBilling, undefined);
+    expect(mockUpdateSnapshot).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({ ...newApiBilling, balanceAggregation: "single_key" }),
+      undefined
+    );
     expect(result).toMatchObject({ multiplierSynced: false, previousMultiplier: 0.1 });
   });
 
@@ -138,7 +147,11 @@ describe("provider upstream billing refresh service", () => {
 
     const result = await refreshProviderUpstreamBilling(7, { source: "request" });
 
-    expect(mockUpdateSnapshot).toHaveBeenCalledWith(7, newApiBilling, 0.1);
+    expect(mockUpdateSnapshot).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({ ...newApiBilling, balanceAggregation: "single_key" }),
+      0.1
+    );
     expect(mockClearConfigCache).toHaveBeenCalledWith(7);
     expect(mockPublishInvalidation).toHaveBeenCalledOnce();
     expect(result).toMatchObject({ multiplierSynced: true, previousMultiplier: 1 });
@@ -157,7 +170,11 @@ describe("provider upstream billing refresh service", () => {
 
     await refreshProviderUpstreamBilling(7, { source: "request" });
 
-    expect(mockUpdateSnapshot).toHaveBeenCalledWith(7, failedBilling, undefined);
+    expect(mockUpdateSnapshot).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({ ...failedBilling, balanceAggregation: "unavailable" }),
+      undefined
+    );
     expect(mockClearConfigCache).not.toHaveBeenCalled();
   });
 });
