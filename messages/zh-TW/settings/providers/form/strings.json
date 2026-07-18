@@ -182,7 +182,7 @@
   "websiteUrlInvalid": "請輸入有效的供應商官網位址",
   "websiteUrlPlaceholder": "https://example.com",
   "weight": "權重",
-  "weightDesc": "加權隨機。同一優先級內，權重越高被選中機率越大。例如 1:2:3 約為 16%:33%:50%",
+  "weightDesc": "基礎權重。同一智慧評分層內，實際調度權重 = 基礎權重 × 目前可用 Key 數；Key 冷卻後會自動降低流量。",
   "weightLabel": "權重",
   "weightPlaceholder": "1"
 }

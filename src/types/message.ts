@@ -23,11 +23,15 @@ export interface ProviderChainItem {
   endpointId?: number | null;
   endpointUrl?: string;
 
+  // 上游凭据维度（仅记录内部 ID，不记录明文密钥）
+  providerKeyId?: number | null;
+
   // === 选择原因（细化） ===
   reason?:
     | "session_reuse" // 会话复用
     | "initial_selection" // 首次选择（成功）
     | "concurrent_limit_failed" // 并发限制失败
+    | "provider_request_limit" // Provider 上游 RPM/请求并发限制
     | "request_success" // 修复：请求成功（首次）
     | "retry_success" // 重试成功
     | "retry_failed" // 重试失败（供应商错误，已计入熔断器）
@@ -209,6 +213,8 @@ export interface ProviderChainItem {
       id: number;
       name: string;
       weight: number;
+      readyKeyCount?: number; // 当前未冷却且已启用的 Key 数
+      effectiveWeight?: number; // 配置权重乘以有效 Key 数后的实际调度权重
       costMultiplier: number;
       probability?: number; // 被选中的概率（加权后）
     }>;

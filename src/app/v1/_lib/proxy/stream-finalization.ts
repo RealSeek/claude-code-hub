@@ -18,6 +18,7 @@ import type { ProxySession } from "./session";
  */
 export type DeferredStreamingFinalization = {
   providerId: number;
+  selectedApiKeyId?: number | null;
   providerName: string;
   providerPriority: number;
   attemptNumber: number;
@@ -27,6 +28,7 @@ export type DeferredStreamingFinalization = {
   endpointId: number | null;
   endpointUrl: string;
   upstreamStatusCode: number;
+  upstreamHeaders?: Record<string, string>;
   /** When true, commitWinner() already performed session binding and chain logging; finalization should skip them. */
   isHedgeWinner?: boolean;
   /**

@@ -453,6 +453,45 @@ const PROVIDER_CUSTOM_HEADERS_SCHEMA = z
   })
   .optional();
 
+const PROVIDER_API_KEYS_SCHEMA = z
+  .array(
+    z.object({
+      key: z.string().min(1, "API密钥不能为空").max(PROVIDER_KEY_MAX_LENGTH, "API密钥长度超出限制"),
+      label: z.string().max(100, "Key标签不能超过100个字符").nullable().optional(),
+      is_enabled: z.boolean().optional().default(true),
+      sort_order: z.number().int().min(0).optional(),
+    })
+  )
+  .min(1, "至少需要一个启用的API密钥")
+  .max(100, "单个供应商最多支持100个API密钥")
+  .optional();
+
+// 编辑时已有 Key 可以只提交 id 和非敏感元数据；只有新增行才必须提交明文 key。
+const PROVIDER_API_KEYS_UPDATE_SCHEMA = z
+  .array(
+    z.object({
+      id: z.number().int().positive().optional(),
+      key: z.string().min(1, "API密钥不能为空").max(PROVIDER_KEY_MAX_LENGTH).optional(),
+      label: z.string().max(100, "Key标签不能超过100个字符").nullable().optional(),
+      is_enabled: z.boolean().optional(),
+      sort_order: z.number().int().min(0).optional(),
+    })
+  )
+  .min(0, "Key池可以为空")
+  .max(100, "单个供应商最多支持100个API密钥")
+  .superRefine((keys, ctx) => {
+    keys.forEach((key, index) => {
+      if (key.id === undefined && key.key === undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [index, "key"],
+          message: "新增API密钥必须提供key",
+        });
+      }
+    });
+  })
+  .optional();
+
 /**
  * 服务商创建数据验证schema
  */
@@ -460,7 +499,13 @@ export const CreateProviderSchema = z
   .object({
     name: z.string().min(1, "服务商名称不能为空").max(64, "服务商名称不能超过64个字符"),
     url: z.string().url("请输入有效的URL地址").max(255, "URL长度不能超过255个字符"),
-    key: z.string().min(1, "API密钥不能为空").max(PROVIDER_KEY_MAX_LENGTH, "API密钥长度超出限制"),
+    key: z
+      .string()
+      .min(1, "API密钥不能为空")
+      .max(PROVIDER_KEY_MAX_LENGTH, "API密钥长度超出限制")
+      .optional(),
+    key_strategy: z.enum(["sequential", "round_robin"]).optional().default("round_robin"),
+    api_keys: PROVIDER_API_KEYS_SCHEMA,
     // 数据库字段命名：下划线
     is_enabled: z.boolean().optional().default(PROVIDER_DEFAULTS.IS_ENABLED),
     weight: z
@@ -484,6 +529,29 @@ export const CreateProviderSchema = z
       .default(null),
     cost_multiplier: z.coerce.number().min(0, "成本倍率不能为负数").optional().default(1.0),
     group_tag: z.string().max(255, "分组标签不能超过255个字符").nullable().optional(),
+    upstream_billing_type: z.enum(["auto", "new-api", "sub2api"]).optional().default("auto"),
+    upstream_billing_access_token: z
+      .string()
+      .trim()
+      .min(1)
+      .max(1024 * 1024)
+      .nullable()
+      .optional(),
+    upstream_billing_cookie: z
+      .string()
+      .trim()
+      .min(1)
+      .max(1024 * 1024)
+      .nullable()
+      .optional(),
+    upstream_billing_user_id: z.string().trim().min(1).max(128).nullable().optional(),
+    upstream_billing_refresh_interval_minutes: z.coerce
+      .number()
+      .int("主动更新间隔必须是整数")
+      .min(0, "主动更新间隔不能小于 0")
+      .max(10080, "主动更新间隔不能超过 10080 分钟")
+      .optional()
+      .default(30),
     // Codex 支持:供应商类型和模型重定向
     provider_type: z
       .enum(["claude", "claude-auth", "codex", "gemini", "gemini-cli", "openai-compatible"])
@@ -663,13 +731,20 @@ export const CreateProviderSchema = z
       .nullable()
       .optional(),
     favicon_url: z.string().max(512, "Favicon URL长度不能超过512个字符").nullable().optional(),
-    // 废弃字段（保留向后兼容，不再验证范围）
+    // Provider 上游智能调度限制：0/null 表示不限制。
     tpm: z.number().int().nullable().optional(),
-    rpm: z.number().int().nullable().optional(),
+    rpm: z.number().int().min(0).max(1_000_000).nullable().optional(),
     rpd: z.number().int().nullable().optional(),
-    cc: z.number().int().nullable().optional(),
+    cc: z.number().int().min(0).max(100_000).nullable().optional(),
   })
   .superRefine((data, ctx) => {
+    if (!data.key && (!data.api_keys || data.api_keys.length === 0)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["key"],
+        message: "请至少提供一个API密钥",
+      });
+    }
     const maxTokens = data.anthropic_max_tokens_preference;
     const budget = data.anthropic_thinking_budget_preference;
     if (maxTokens && maxTokens !== "inherit" && budget && budget !== "inherit") {
@@ -714,6 +789,8 @@ export const UpdateProviderSchema = z
       .min(1, "API密钥不能为空")
       .max(PROVIDER_KEY_MAX_LENGTH, "API密钥长度超出限制")
       .optional(),
+    key_strategy: z.enum(["sequential", "round_robin"]).optional(),
+    api_keys: PROVIDER_API_KEYS_UPDATE_SCHEMA,
     is_enabled: z.boolean().optional(),
     weight: z
       .number()
@@ -733,6 +810,28 @@ export const UpdateProviderSchema = z
       .optional(),
     cost_multiplier: z.coerce.number().min(0, "成本倍率不能为负数").optional(),
     group_tag: z.string().max(255, "分组标签不能超过255个字符").nullable().optional(),
+    upstream_billing_type: z.enum(["auto", "new-api", "sub2api"]).optional(),
+    upstream_billing_access_token: z
+      .string()
+      .trim()
+      .min(1)
+      .max(1024 * 1024)
+      .nullable()
+      .optional(),
+    upstream_billing_cookie: z
+      .string()
+      .trim()
+      .min(1)
+      .max(1024 * 1024)
+      .nullable()
+      .optional(),
+    upstream_billing_user_id: z.string().trim().min(1).max(128).nullable().optional(),
+    upstream_billing_refresh_interval_minutes: z.coerce
+      .number()
+      .int("主动更新间隔必须是整数")
+      .min(0, "主动更新间隔不能小于 0")
+      .max(10080, "主动更新间隔不能超过 10080 分钟")
+      .optional(),
     // Codex 支持:供应商类型和模型重定向
     provider_type: z
       .enum(["claude", "claude-auth", "codex", "gemini", "gemini-cli", "openai-compatible"])
@@ -902,11 +1001,11 @@ export const UpdateProviderSchema = z
       .nullable()
       .optional(),
     favicon_url: z.string().max(512, "Favicon URL长度不能超过512个字符").nullable().optional(),
-    // 废弃字段（保留向后兼容，不再验证范围）
+    // Provider 上游智能调度限制：0/null 表示不限制。
     tpm: z.number().int().nullable().optional(),
-    rpm: z.number().int().nullable().optional(),
+    rpm: z.number().int().min(0).max(1_000_000).nullable().optional(),
     rpd: z.number().int().nullable().optional(),
-    cc: z.number().int().nullable().optional(),
+    cc: z.number().int().min(0).max(100_000).nullable().optional(),
   })
   .refine((obj) => Object.keys(obj).length > 0, { message: "更新内容为空" })
   .superRefine((data, ctx) => {
@@ -1076,6 +1175,23 @@ export const UpdateSystemSettingsSchema = z.object({
         .min(1024)
         .max(10 * 1024 * 1024)
         .optional(),
+    })
+    .partial()
+    .optional(),
+  smartDispatchConfig: z
+    .object({
+      enabled: z.boolean().optional(),
+      healthScoreEnabled: z.boolean().optional(),
+      windowMinutes: z.coerce.number().int().min(1).max(1440).optional(),
+      minConfidentSample: z.coerce.number().int().min(1).max(100000).optional(),
+      successRatePenaltyWeight: z.coerce.number().min(0).max(10000).optional(),
+      enableTTFBScore: z.boolean().optional(),
+      ttfbPenaltyWeight: z.coerce.number().min(0).max(10000).optional(),
+      ttfbMaxSlowRatio: z.coerce.number().min(0).max(100).optional(),
+      ttfbMinConfidentSample: z.coerce.number().int().min(1).max(100000).optional(),
+      cooldownBaseMs: z.coerce.number().int().min(1000).max(86400000).optional(),
+      cooldownMaxMs: z.coerce.number().int().min(1000).max(604800000).optional(),
+      ewmaAlpha: z.coerce.number().min(0.01).max(1).optional(),
     })
     .partial()
     .optional(),

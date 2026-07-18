@@ -13,6 +13,36 @@ export interface ResponseFixerConfig {
   maxFixSize: number;
 }
 
+export interface SmartDispatchSettings {
+  enabled: boolean;
+  healthScoreEnabled: boolean;
+  windowMinutes: number;
+  minConfidentSample: number;
+  successRatePenaltyWeight: number;
+  enableTTFBScore: boolean;
+  ttfbPenaltyWeight: number;
+  ttfbMaxSlowRatio: number;
+  ttfbMinConfidentSample: number;
+  cooldownBaseMs: number;
+  cooldownMaxMs: number;
+  ewmaAlpha: number;
+}
+
+export const DEFAULT_SMART_DISPATCH_SETTINGS: SmartDispatchSettings = {
+  enabled: true,
+  healthScoreEnabled: false,
+  windowMinutes: 30,
+  minConfidentSample: 20,
+  successRatePenaltyWeight: 100,
+  enableTTFBScore: false,
+  ttfbPenaltyWeight: 20,
+  ttfbMaxSlowRatio: 2,
+  ttfbMinConfidentSample: 10,
+  cooldownBaseMs: 120_000,
+  cooldownMaxMs: 1_800_000,
+  ewmaAlpha: 0.3,
+};
+
 // Fake streaming whitelist entry: pairs an exact client-requested model name
 // with optional provider group tags. Empty groupTags means "all groups".
 export interface FakeStreamingWhitelistEntry {
@@ -130,6 +160,9 @@ export interface SystemSettings {
   enableResponseFixer: boolean;
   responseFixerConfig: ResponseFixerConfig;
 
+  // ccLoad 兼容智能调度配置
+  smartDispatchConfig: SmartDispatchSettings;
+
   // Quota lease settings
   quotaDbRefreshIntervalSeconds?: number;
   quotaLeasePercent5h?: number;
@@ -233,6 +266,9 @@ export interface UpdateSystemSettingsInput {
   // 响应整流（可选）
   enableResponseFixer?: boolean;
   responseFixerConfig?: Partial<ResponseFixerConfig>;
+
+  // ccLoad 兼容智能调度配置（可选）
+  smartDispatchConfig?: Partial<SmartDispatchSettings>;
 
   // Quota lease settings（可选）
   quotaDbRefreshIntervalSeconds?: number;

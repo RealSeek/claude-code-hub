@@ -362,7 +362,8 @@ describe("Endpoint circuit breaker isolation", () => {
 
     expect(mockRecordFailure).toHaveBeenCalledWith(
       1,
-      expect.objectContaining({ message: expect.stringContaining("FAKE_200") })
+      expect.objectContaining({ message: expect.stringContaining("FAKE_200") }),
+      expect.objectContaining({ statusCode: 401, body: expect.stringContaining("invalid api key") })
     );
     expect(mockRecordEndpointFailure).not.toHaveBeenCalled();
     expect(SessionManager.clearSessionProvider).toHaveBeenCalledWith("fake-session");
@@ -390,7 +391,8 @@ describe("Endpoint circuit breaker isolation", () => {
 
     expect(mockRecordFailure).toHaveBeenCalledWith(
       1,
-      expect.objectContaining({ message: expect.stringContaining("FAKE_200") })
+      expect.objectContaining({ message: expect.stringContaining("FAKE_200") }),
+      expect.objectContaining({ statusCode: 401, body: expect.stringContaining("invalid api key") })
     );
     expect(mockRecordEndpointFailure).not.toHaveBeenCalled();
     expect(SessionManager.clearSessionProvider).toHaveBeenCalledWith("fake-session");
@@ -422,29 +424,35 @@ describe("Endpoint circuit breaker isolation", () => {
     ).toBe(true);
   });
 
-  it("non-200 HTTP status should call recordFailure but NOT recordEndpointFailure", async () => {
-    const session = createSession();
-    // Set upstream status to 429 in deferred meta
-    setDeferredStreamingFinalization(session, {
-      providerId: 1,
-      providerName: "test-provider",
-      providerPriority: 10,
-      attemptNumber: 1,
-      totalProvidersAttempted: 1,
-      isFirstAttempt: true,
-      isFailoverSuccess: false,
-      endpointId: 42,
-      endpointUrl: "https://api.test.com",
-      upstreamStatusCode: 429,
-    });
+  it.each([401, 429])(
+    "HTTP %i should call recordFailure but NOT recordEndpointFailure",
+    async (statusCode) => {
+      const session = createSession();
+      setDeferredStreamingFinalization(session, {
+        providerId: 1,
+        providerName: "test-provider",
+        providerPriority: 10,
+        attemptNumber: 1,
+        totalProvidersAttempted: 1,
+        isFirstAttempt: true,
+        isFailoverSuccess: false,
+        endpointId: 42,
+        endpointUrl: "https://api.test.com",
+        upstreamStatusCode: statusCode,
+      });
 
-    const response = createNon200StreamResponse(429);
-    await ProxyResponseHandler.dispatch(session, response);
-    await drainAsyncTasks();
+      const response = createNon200StreamResponse(statusCode);
+      await ProxyResponseHandler.dispatch(session, response);
+      await drainAsyncTasks();
 
-    expect(mockRecordFailure).toHaveBeenCalledWith(1, expect.any(Error));
-    expect(mockRecordEndpointFailure).not.toHaveBeenCalled();
-  });
+      expect(mockRecordFailure).toHaveBeenCalledWith(
+        1,
+        expect.any(Error),
+        expect.objectContaining({ statusCode, body: expect.any(String) })
+      );
+      expect(mockRecordEndpointFailure).not.toHaveBeenCalled();
+    }
+  );
 
   it("streaming success DOES call recordEndpointSuccess (regression guard)", async () => {
     const session = createSession();

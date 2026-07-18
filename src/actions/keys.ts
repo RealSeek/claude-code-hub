@@ -23,12 +23,13 @@ import type { KeyStatistics } from "@/repository/key";
 import {
   countActiveKeysByUser,
   createKey,
-  deleteKey,
+  deleteKeyAtomically,
   findActiveKeyByUserIdAndName,
   findKeyById,
   findKeyList,
   findKeysWithStatistics,
   resetKeyCostResetAt,
+  updateKeyEnabledAtomically,
   updateKey,
 } from "@/repository/key";
 import type { Key } from "@/types/key";
@@ -649,11 +650,32 @@ export async function editKey(
     const nextProviderGroup = isAdmin ? normalizeProviderGroup(validatedData.providerGroup) : null;
     const providerGroupChanged = isAdmin && nextProviderGroup !== prevProviderGroup;
 
+    let protectedDisable = false;
+    if (data.isEnabled === false && key.isEnabled) {
+      const protectedResult = await updateKeyEnabledAtomically(keyId, false);
+      if (!protectedResult.ok) {
+        return {
+          ok: false,
+          error:
+            protectedResult.reason === "last_enabled_key"
+              ? tError("CANNOT_DISABLE_LAST_KEY")
+              : tError("KEY_NOT_FOUND"),
+          errorCode:
+            protectedResult.reason === "last_enabled_key"
+              ? ERROR_CODES.OPERATION_FAILED
+              : ERROR_CODES.KEY_NOT_FOUND,
+        };
+      }
+      protectedDisable = true;
+    }
+
     await updateKey(keyId, {
       name: validatedData.name,
       ...(hasExpiresAtField ? { expires_at: expiresAt } : {}),
       can_login_web_ui: validatedData.canLoginWebUi,
-      ...(data.isEnabled !== undefined ? { is_enabled: data.isEnabled } : {}),
+      ...(!protectedDisable && data.isEnabled !== undefined
+        ? { is_enabled: data.isEnabled }
+        : {}),
       limit_5h_usd: validatedData.limit5hUsd,
       limit_5h_reset_mode: validatedData.limit5hResetMode,
       limit_daily_usd: validatedData.limitDailyUsd,
@@ -826,7 +848,20 @@ export async function removeKey(keyId: number): Promise<ActionResult> {
       }
     }
 
-    await deleteKey(keyId);
+    const deleteResult = await deleteKeyAtomically(keyId);
+    if (!deleteResult.ok) {
+      return {
+        ok: false,
+        error:
+          deleteResult.reason === "last_enabled_key"
+            ? tError("CANNOT_DELETE_LAST_KEY")
+            : tError("KEY_NOT_FOUND"),
+        errorCode:
+          deleteResult.reason === "last_enabled_key"
+            ? ERROR_CODES.CANNOT_DELETE_LAST_KEY
+            : ERROR_CODES.KEY_NOT_FOUND,
+      };
+    }
 
     // 自动同步用户分组（删除 Key 后用户分组可能变化）
     await syncUserProviderGroupFromKeys(key.userId);
@@ -1247,7 +1282,20 @@ export async function toggleKeyEnabled(keyId: number, enabled: boolean): Promise
       }
     }
 
-    await updateKey(keyId, { is_enabled: enabled });
+    const result = await updateKeyEnabledAtomically(keyId, enabled);
+    if (!result.ok) {
+      return {
+        ok: false,
+        error:
+          result.reason === "last_enabled_key"
+            ? tError("CANNOT_DISABLE_LAST_KEY")
+            : tError("KEY_NOT_FOUND"),
+        errorCode:
+          result.reason === "last_enabled_key"
+            ? ERROR_CODES.OPERATION_FAILED
+            : ERROR_CODES.KEY_NOT_FOUND,
+      };
+    }
     revalidatePath("/dashboard/users");
     revalidatePath("/dashboard");
     return { ok: true };

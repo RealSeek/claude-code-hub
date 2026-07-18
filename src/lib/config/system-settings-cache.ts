@@ -14,7 +14,7 @@
 
 import { logger } from "@/lib/logger";
 import { getSystemSettings } from "@/repository/system-config";
-import type { SystemSettings } from "@/types/system-config";
+import { DEFAULT_SMART_DISPATCH_SETTINGS, type SystemSettings } from "@/types/system-config";
 
 /** Cache TTL in milliseconds (1 minute) */
 const CACHE_TTL_MS = 60 * 1000;
@@ -51,6 +51,7 @@ const DEFAULT_SETTINGS: Pick<
   | "enableClaudeMetadataUserIdInjection"
   | "enableResponseFixer"
   | "responseFixerConfig"
+  | "smartDispatchConfig"
   | "passThroughUpstreamErrorMessage"
   | "publicStatusWindowHours"
   | "publicStatusAggregationIntervalMinutes"
@@ -82,6 +83,7 @@ const DEFAULT_SETTINGS: Pick<
     maxJsonDepth: 200,
     maxFixSize: 1024 * 1024,
   },
+  smartDispatchConfig: { ...DEFAULT_SMART_DISPATCH_SETTINGS },
   publicStatusWindowHours: 24,
   publicStatusAggregationIntervalMinutes: 5,
 };
@@ -163,6 +165,7 @@ export async function getCachedSystemSettings(): Promise<SystemSettings> {
       enableClaudeMetadataUserIdInjection: DEFAULT_SETTINGS.enableClaudeMetadataUserIdInjection,
       enableResponseFixer: DEFAULT_SETTINGS.enableResponseFixer,
       responseFixerConfig: DEFAULT_SETTINGS.responseFixerConfig,
+      smartDispatchConfig: DEFAULT_SETTINGS.smartDispatchConfig,
       publicStatusWindowHours: DEFAULT_SETTINGS.publicStatusWindowHours,
       publicStatusAggregationIntervalMinutes:
         DEFAULT_SETTINGS.publicStatusAggregationIntervalMinutes,

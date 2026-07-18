@@ -65,6 +65,8 @@ const PATCH_FIELDS: ProviderBatchPatchField[] = [
   "limit_monthly_usd",
   "limit_total_usd",
   "limit_concurrent_sessions",
+  "rpm_limit",
+  "max_concurrency",
   // Circuit Breaker
   "circuit_breaker_failure_threshold",
   "circuit_breaker_open_duration",
@@ -121,6 +123,8 @@ const CLEARABLE_FIELDS: Record<ProviderBatchPatchField, boolean> = {
   limit_monthly_usd: true,
   limit_total_usd: true,
   limit_concurrent_sessions: false,
+  rpm_limit: false,
+  max_concurrency: false,
   // Circuit Breaker
   circuit_breaker_failure_threshold: false,
   circuit_breaker_open_duration: false,
@@ -225,6 +229,8 @@ function isValidSetValue(field: ProviderBatchPatchField, value: unknown): boolea
     case "limit_monthly_usd":
     case "limit_total_usd":
     case "limit_concurrent_sessions":
+    case "rpm_limit":
+    case "max_concurrency":
     case "circuit_breaker_failure_threshold":
     case "circuit_breaker_open_duration":
     case "circuit_breaker_half_open_success_threshold":
@@ -572,6 +578,12 @@ export function normalizeProviderBatchPatchDraft(
   );
   if (!limitConcurrentSessions.ok) return limitConcurrentSessions;
 
+  const rpmLimit = normalizePatchField("rpm_limit", typedDraft.rpm_limit);
+  if (!rpmLimit.ok) return rpmLimit;
+
+  const maxConcurrency = normalizePatchField("max_concurrency", typedDraft.max_concurrency);
+  if (!maxConcurrency.ok) return maxConcurrency;
+
   // Circuit Breaker
   const cbFailureThreshold = normalizePatchField(
     "circuit_breaker_failure_threshold",
@@ -676,6 +688,8 @@ export function normalizeProviderBatchPatchDraft(
       limit_monthly_usd: limitMonthlyUsd.data,
       limit_total_usd: limitTotalUsd.data,
       limit_concurrent_sessions: limitConcurrentSessions.data,
+      rpm_limit: rpmLimit.data,
+      max_concurrency: maxConcurrency.data,
       // Circuit Breaker
       circuit_breaker_failure_threshold: cbFailureThreshold.data,
       circuit_breaker_open_duration: cbOpenDuration.data,
@@ -835,6 +849,12 @@ function applyPatchField<T>(
         updates.limit_concurrent_sessions =
           patch.value as ProviderBatchApplyUpdates["limit_concurrent_sessions"];
         return { ok: true, data: undefined };
+      case "rpm_limit":
+        updates.rpm_limit = patch.value as ProviderBatchApplyUpdates["rpm_limit"];
+        return { ok: true, data: undefined };
+      case "max_concurrency":
+        updates.max_concurrency = patch.value as ProviderBatchApplyUpdates["max_concurrency"];
+        return { ok: true, data: undefined };
       // Circuit Breaker
       case "circuit_breaker_failure_threshold":
         updates.circuit_breaker_failure_threshold =
@@ -966,6 +986,12 @@ function applyPatchField<T>(
     case "limit_total_usd":
       updates.limit_total_usd = null;
       return { ok: true, data: undefined };
+    case "rpm_limit":
+      updates.rpm_limit = 0;
+      return { ok: true, data: undefined };
+    case "max_concurrency":
+      updates.max_concurrency = 0;
+      return { ok: true, data: undefined };
     // Circuit Breaker
     case "max_retry_attempts":
       updates.max_retry_attempts = null;
@@ -1027,6 +1053,8 @@ export function buildProviderBatchApplyUpdates(
     ["limit_monthly_usd", patch.limit_monthly_usd],
     ["limit_total_usd", patch.limit_total_usd],
     ["limit_concurrent_sessions", patch.limit_concurrent_sessions],
+    ["rpm_limit", patch.rpm_limit],
+    ["max_concurrency", patch.max_concurrency],
     // Circuit Breaker
     ["circuit_breaker_failure_threshold", patch.circuit_breaker_failure_threshold],
     ["circuit_breaker_open_duration", patch.circuit_breaker_open_duration],

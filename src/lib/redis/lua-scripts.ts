@@ -122,6 +122,85 @@ return {removed, remaining_refs}
 `;
 
 /**
+ * 原子申请 Provider 上游请求槽位并记录 RPM。
+ *
+ * KEYS[1]: provider:{id}:active_requests
+ * KEYS[2]: provider:{id}:rpm_window
+ * 两个 key 必须使用相同的 Redis Cluster hash tag（例如 provider:{42}:...）。
+ * ARGV[1]: request/attempt id
+ * ARGV[2]: rpm limit (0 = unlimited)
+ * ARGV[3]: concurrency limit (0 = unlimited)
+ * ARGV[4]: now in milliseconds
+ * ARGV[5]: active request TTL in milliseconds
+ * ARGV[6]: RPM window in milliseconds
+ *
+ * Return: {allowed, reason(0/1/2), activeCount, rpmCount, retryAfterMs}
+ * reason=1 表示并发上限，reason=2 表示 RPM 上限。
+ */
+export const ACQUIRE_PROVIDER_REQUEST = `
+local active_key = KEYS[1]
+local rpm_key = KEYS[2]
+local request_id = ARGV[1]
+local rpm_limit = tonumber(ARGV[2]) or 0
+local concurrency_limit = tonumber(ARGV[3]) or 0
+local now = tonumber(ARGV[4])
+local active_ttl = tonumber(ARGV[5]) or 300000
+local rpm_window = tonumber(ARGV[6]) or 60000
+
+if active_ttl <= 0 then active_ttl = 300000 end
+if rpm_window <= 0 then rpm_window = 60000 end
+
+local active_cutoff = now - active_ttl
+redis.call('ZREMRANGEBYSCORE', active_key, '-inf', active_cutoff)
+redis.call('ZREMRANGEBYSCORE', rpm_key, '-inf', now - rpm_window)
+
+local already_active = redis.call('ZSCORE', active_key, request_id)
+local already_rpm = redis.call('ZSCORE', rpm_key, request_id)
+local active_count = redis.call('ZCARD', active_key)
+if concurrency_limit > 0 and not already_active and active_count >= concurrency_limit then
+  local oldest = redis.call('ZRANGE', active_key, 0, 0, 'WITHSCORES')
+  local retry_after = 1
+  if oldest[2] then retry_after = math.max(1, tonumber(oldest[2]) + active_ttl - now) end
+  return {0, 1, active_count, redis.call('ZCARD', rpm_key), retry_after}
+end
+
+local rpm_count = redis.call('ZCARD', rpm_key)
+if rpm_limit > 0 and not already_rpm and rpm_count >= rpm_limit then
+  local oldest = redis.call('ZRANGE', rpm_key, 0, 0, 'WITHSCORES')
+  local retry_after = rpm_window
+  if oldest[2] then retry_after = math.max(1, tonumber(oldest[2]) + rpm_window - now) end
+  return {0, 2, active_count, rpm_count, retry_after}
+end
+
+if not already_active then
+  redis.call('ZADD', active_key, now, request_id)
+  active_count = active_count + 1
+end
+if not already_rpm then
+  redis.call('ZADD', rpm_key, now, request_id)
+  rpm_count = rpm_count + 1
+end
+redis.call('EXPIRE', active_key, math.max(3600, math.floor(active_ttl / 1000)))
+redis.call('EXPIRE', rpm_key, math.max(120, math.floor(rpm_window / 1000) + 60))
+return {1, 0, active_count, rpm_count, 0}
+`;
+
+/** Redis Cluster 下原子递增并设置首次过期时间的 Provider Key 轮询计数器。 */
+export const INCREMENT_PROVIDER_KEY_ROUND_ROBIN = `
+local value = redis.call('INCR', KEYS[1])
+if value == 1 then
+  redis.call('EXPIRE', KEYS[1], tonumber(ARGV[1]) or 86400)
+end
+return value
+`;
+
+/** 释放一个 Provider 上游请求槽位；RPM 记录不会被删除。 */
+export const RELEASE_PROVIDER_REQUEST = `
+local removed = redis.call('ZREM', KEYS[1], ARGV[1])
+return removed
+`;
+
+/**
  * Key/User 并发：原子性检查 + 追踪（修复竞态条件）
  *
  * 目标：

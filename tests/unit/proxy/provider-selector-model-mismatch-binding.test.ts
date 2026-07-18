@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
+import { recordProviderApiKeyFailure, resetProviderKeyDispatchState } from "@/lib/provider-key-dispatch";
+import { recordSmartProviderFailure, resetSmartDispatchState } from "@/lib/smart-dispatch";
 import type { Provider } from "@/types/provider";
 
 const circuitBreakerMocks = vi.hoisted(() => ({
@@ -41,6 +43,8 @@ vi.mock("@/lib/rate-limit", () => rateLimitMocks);
 
 beforeEach(() => {
   vi.resetAllMocks();
+  resetSmartDispatchState();
+  resetProviderKeyDispatchState();
 });
 
 function createHaikuOnlyProvider(): Provider {
@@ -93,6 +97,56 @@ function createOpusProvider(): Provider {
 }
 
 describe("findReusable - model mismatch clears stale binding", () => {
+  test("should clear binding when every configured API key is cooled", async () => {
+    const { ProxyProviderResolver } = await import("@/app/v1/_lib/proxy/provider-selector");
+    const provider = {
+      ...createOpusProvider(),
+      apiKeys: [
+        { id: 501, key: "key-a", isEnabled: true, sortOrder: 0 },
+        { id: 502, key: "key-b", isEnabled: true, sortOrder: 1 },
+      ],
+    } as Provider;
+    sessionManagerMocks.SessionManager.getSessionProvider.mockResolvedValueOnce(provider.id);
+    providerRepositoryMocks.findProviderById.mockResolvedValueOnce(provider);
+    recordProviderApiKeyFailure(501);
+    recordProviderApiKeyFailure(502);
+
+    const session = {
+      sessionId: "sess_all_keys_cooled",
+      shouldReuseProvider: () => true,
+      getOriginalModel: () => "claude-opus-4-6",
+      authState: null,
+    } as any;
+
+    const result = await (ProxyProviderResolver as any).findReusable(session);
+
+    expect(result).toBeNull();
+    expect(sessionManagerMocks.SessionManager.clearSessionProvider).toHaveBeenCalledWith(
+      "sess_all_keys_cooled"
+    );
+  });
+
+  test("should clear binding when the provider is in smart cooldown", async () => {
+    const { ProxyProviderResolver } = await import("@/app/v1/_lib/proxy/provider-selector");
+    sessionManagerMocks.SessionManager.getSessionProvider.mockResolvedValueOnce(94);
+    providerRepositoryMocks.findProviderById.mockResolvedValueOnce(createOpusProvider());
+    recordSmartProviderFailure(94);
+
+    const session = {
+      sessionId: "sess_smart_cooldown",
+      shouldReuseProvider: () => true,
+      getOriginalModel: () => "claude-opus-4-6",
+      authState: null,
+    } as any;
+
+    const result = await (ProxyProviderResolver as any).findReusable(session);
+
+    expect(result).toBeNull();
+    expect(sessionManagerMocks.SessionManager.clearSessionProvider).toHaveBeenCalledWith(
+      "sess_smart_cooldown"
+    );
+  });
+
   test("should clear binding when bound provider disables session reuse", async () => {
     const { ProxyProviderResolver } = await import("@/app/v1/_lib/proxy/provider-selector");
 

@@ -21,6 +21,7 @@ import {
   addProvider,
   editProvider,
   removeProvider,
+  syncProviderCostMultiplier,
   undoProviderDelete,
   undoProviderPatch,
 } from "@/lib/api-client/v1/actions/providers";
@@ -268,8 +269,21 @@ function ProviderFormContent({
       return t("errors.invalidUrl");
     }
 
-    if (!isEdit && !state.basic.key.trim()) {
+    if (!isEdit && !state.basic.key.trim() && !state.basic.apiKeysText.trim()) {
       return t("errors.keyRequired");
+    }
+
+    if (state.basic.upstreamBillingType === "new-api") {
+      if (!state.basic.upstreamBillingUserId.trim()) {
+        return t("errors.newApiUserIdRequired");
+      }
+      if (
+        !state.basic.upstreamBillingCookie.trim() &&
+        (!isEdit ||
+          (!provider?.hasUpstreamBillingCookie && !provider?.hasUpstreamBillingAccessToken))
+      ) {
+        return t("errors.newApiCookieRequired");
+      }
     }
 
     // Custom headers JSON: parse-on-submit; invalid input maps to a localized message
@@ -314,6 +328,11 @@ function ProviderFormContent({
 
         // Handle key: in edit mode, only include if user provided a new key
         const trimmedKey = state.basic.key.trim();
+        const upstreamBillingCookie = state.basic.upstreamBillingCookie.trim();
+        const apiKeys = state.basic.apiKeysText
+          .split(/\r?\n/)
+          .map((value) => value.trim())
+          .filter(Boolean);
 
         // Static custom headers: validateForm has already rejected invalid input,
         // so the parse here is guaranteed to succeed at this point.
@@ -332,7 +351,22 @@ function ProviderFormContent({
         const baseFormData = {
           name: state.basic.name.trim(),
           url: effectiveProviderUrl,
+          ...(isEdit ? {} : { key_strategy: state.basic.keyStrategy }),
+          ...(apiKeys.length > 0
+            ? {
+                api_keys: apiKeys.map((key, index) => ({
+                  key,
+                  is_enabled: true,
+                  sort_order: index,
+                })),
+              }
+            : {}),
           website_url: state.basic.websiteUrl?.trim() || null,
+          upstream_billing_type: state.basic.upstreamBillingType,
+          ...(upstreamBillingCookie ? { upstream_billing_cookie: upstreamBillingCookie } : {}),
+          upstream_billing_user_id: state.basic.upstreamBillingUserId.trim() || null,
+          upstream_billing_refresh_interval_minutes:
+            state.basic.upstreamBillingRefreshIntervalMinutes,
           provider_type: state.routing.providerType,
           preserve_client_ip: state.routing.preserveClientIp,
           disable_session_reuse: state.routing.disableSessionReuse,
@@ -373,6 +407,8 @@ function ProviderFormContent({
           limit_monthly_usd: state.rateLimit.limitMonthlyUsd,
           limit_total_usd: state.rateLimit.limitTotalUsd,
           limit_concurrent_sessions: state.rateLimit.limitConcurrentSessions ?? undefined,
+          rpm_limit: state.rateLimit.rpm ?? undefined,
+          max_concurrency: state.rateLimit.cc ?? undefined,
           circuit_breaker_failure_threshold: state.circuitBreaker.failureThreshold,
           circuit_breaker_open_duration: openDurationMs,
           circuit_breaker_half_open_success_threshold:
@@ -427,7 +463,10 @@ function ProviderFormContent({
           void doInvalidate();
         } else {
           // For create: key is required
-          const createFormData = { ...baseFormData, key: trimmedKey };
+          const createFormData = {
+            ...baseFormData,
+            key: trimmedKey || apiKeys[0] || "",
+          };
           const res = await addProvider(createFormData);
           if (!res.ok) {
             toast.error(res.error || t("errors.addFailed"));
@@ -435,6 +474,17 @@ function ProviderFormContent({
           }
 
           void doInvalidate();
+
+          // 创建后尝试同步上游返回的可靠倍率；失败不影响供应商创建。
+          const createdProviderId = res.data?.id;
+          if (createdProviderId != null && typeof syncProviderCostMultiplier === "function") {
+            void syncProviderCostMultiplier(createdProviderId)
+              .then((syncResult) => {
+                if (syncResult.ok) void doInvalidate();
+                void queryClient.invalidateQueries({ queryKey: ["providers-upstream-billing"] });
+              })
+              .catch(() => undefined);
+          }
 
           toast.success(t("success.created"));
           dispatch({ type: "RESET_FORM" });
@@ -566,7 +616,9 @@ function ProviderFormContent({
       state.rateLimit.limitWeeklyUsd ||
       state.rateLimit.limitMonthlyUsd ||
       state.rateLimit.limitTotalUsd ||
-      state.rateLimit.limitConcurrentSessions
+      state.rateLimit.limitConcurrentSessions ||
+      state.rateLimit.rpm ||
+      state.rateLimit.cc
     ) {
       status.limits = "configured";
     }

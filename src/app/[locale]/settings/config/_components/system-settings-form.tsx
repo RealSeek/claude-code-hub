@@ -48,11 +48,12 @@ import {
   shouldWarnQuotaLeasePercentZero,
 } from "@/lib/utils/validation/quota-lease-warnings";
 import { DEFAULT_IP_EXTRACTION_CONFIG, type IpExtractionConfig } from "@/types/ip-extraction";
-import type {
-  BillingModelSource,
-  CodexPriorityBillingSource,
-  FakeStreamingWhitelistEntry,
-  SystemSettings,
+import {
+  DEFAULT_SMART_DISPATCH_SETTINGS,
+  type BillingModelSource,
+  type CodexPriorityBillingSource,
+  type FakeStreamingWhitelistEntry,
+  type SystemSettings,
 } from "@/types/system-config";
 
 interface SystemSettingsFormProps {
@@ -84,6 +85,7 @@ interface SystemSettingsFormProps {
     | "enableClaudeMetadataUserIdInjection"
     | "enableResponseFixer"
     | "responseFixerConfig"
+    | "smartDispatchConfig"
     | "quotaDbRefreshIntervalSeconds"
     | "quotaLeasePercent5h"
     | "quotaLeasePercentDaily"
@@ -188,6 +190,9 @@ export function SystemSettingsForm({ initialSettings }: SystemSettingsFormProps)
   const [responseFixerConfig, setResponseFixerConfig] = useState(
     initialSettings.responseFixerConfig
   );
+  const [smartDispatchConfig, setSmartDispatchConfig] = useState(
+    initialSettings.smartDispatchConfig ?? DEFAULT_SMART_DISPATCH_SETTINGS
+  );
   const [quotaDbRefreshIntervalSecondsStr, setQuotaDbRefreshIntervalSecondsStr] = useState(
     String(initialSettings.quotaDbRefreshIntervalSeconds ?? 10)
   );
@@ -220,6 +225,7 @@ export function SystemSettingsForm({ initialSettings }: SystemSettingsFormProps)
   );
   const [isPending, startTransition] = useTransition();
   const [responseFixerOpen, setResponseFixerOpen] = useState(false);
+  const [smartDispatchOpen, setSmartDispatchOpen] = useState(false);
   const [quotaLeaseOpen, setQuotaLeaseOpen] = useState(false);
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
@@ -330,6 +336,7 @@ export function SystemSettingsForm({ initialSettings }: SystemSettingsFormProps)
         enableClaudeMetadataUserIdInjection,
         enableResponseFixer,
         responseFixerConfig,
+        smartDispatchConfig,
         quotaDbRefreshIntervalSeconds: quotaDbRefreshIntervalSecondsToSave,
         quotaLeasePercent5h,
         quotaLeasePercentDaily,
@@ -379,6 +386,9 @@ export function SystemSettingsForm({ initialSettings }: SystemSettingsFormProps)
         setEnableClaudeMetadataUserIdInjection(result.data.enableClaudeMetadataUserIdInjection);
         setEnableResponseFixer(result.data.enableResponseFixer);
         setResponseFixerConfig(result.data.responseFixerConfig);
+        setSmartDispatchConfig(
+          result.data.smartDispatchConfig ?? DEFAULT_SMART_DISPATCH_SETTINGS
+        );
         setQuotaDbRefreshIntervalSecondsStr(
           String(result.data.quotaDbRefreshIntervalSeconds ?? 10)
         );
@@ -1083,6 +1093,141 @@ export function SystemSettingsForm({ initialSettings }: SystemSettingsFormProps)
             </Collapsible>
           )}
         </div>
+        <Collapsible open={smartDispatchOpen} onOpenChange={setSmartDispatchOpen}>
+          <div className="p-4 rounded-xl bg-white/[0.02] border border-white/5 hover:bg-white/[0.04] transition-colors">
+            <div className="flex items-center justify-between gap-4">
+              <CollapsibleTrigger asChild>
+                <button type="button" className="flex items-center gap-3 flex-1 text-left">
+                  <div className="w-8 h-8 flex items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-400 shrink-0">
+                    <Network className="h-4 w-4" />
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-foreground">
+                      {t("smartDispatch.title")}
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {t("smartDispatch.description")}
+                    </p>
+                  </div>
+                  <ChevronDown
+                    className={`h-4 w-4 text-muted-foreground transition-transform ${smartDispatchOpen ? "" : "-rotate-90"}`}
+                  />
+                </button>
+              </CollapsibleTrigger>
+              <Switch
+                checked={smartDispatchConfig.enabled}
+                onCheckedChange={(enabled) =>
+                  setSmartDispatchConfig((prev) => ({ ...prev, enabled }))
+                }
+                disabled={isPending}
+              />
+            </div>
+            <CollapsibleContent>
+              <div className="mt-4 pl-11 space-y-4">
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <Label>{t("smartDispatch.healthScore")}</Label>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {t("smartDispatch.healthScoreDesc")}
+                    </p>
+                  </div>
+                  <Switch
+                    checked={smartDispatchConfig.healthScoreEnabled}
+                    onCheckedChange={(healthScoreEnabled) =>
+                      setSmartDispatchConfig((prev) => ({ ...prev, healthScoreEnabled }))
+                    }
+                    disabled={isPending || !smartDispatchConfig.enabled}
+                  />
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {[
+                    ["windowMinutes", "windowMinutes", 1],
+                    ["minConfidentSample", "minConfidentSample", 1],
+                    ["successRatePenaltyWeight", "successRatePenaltyWeight", 0],
+                    ["ttfbPenaltyWeight", "ttfbPenaltyWeight", 0],
+                    ["ttfbMaxSlowRatio", "ttfbMaxSlowRatio", 0],
+                    ["ttfbMinConfidentSample", "ttfbMinConfidentSample", 1],
+                  ].map(([field, label, min]) => (
+                    <div key={String(field)} className="space-y-2">
+                      <Label>{t(`smartDispatch.${label}`)}</Label>
+                      <Input
+                        type="number"
+                        min={Number(min)}
+                        step={field === "ttfbMaxSlowRatio" ? "0.1" : "1"}
+                        value={
+                          smartDispatchConfig[field as keyof typeof smartDispatchConfig] as number
+                        }
+                        onChange={(event) =>
+                          setSmartDispatchConfig((prev) => ({
+                            ...prev,
+                            [field]: Number(event.target.value),
+                          }))
+                        }
+                        disabled={isPending || !smartDispatchConfig.healthScoreEnabled}
+                      />
+                    </div>
+                  ))}
+                </div>
+                <div className="flex items-center justify-between gap-4">
+                  <Label>{t("smartDispatch.enableTTFBScore")}</Label>
+                  <Switch
+                    checked={smartDispatchConfig.enableTTFBScore}
+                    onCheckedChange={(enableTTFBScore) =>
+                      setSmartDispatchConfig((prev) => ({ ...prev, enableTTFBScore }))
+                    }
+                    disabled={isPending || !smartDispatchConfig.healthScoreEnabled}
+                  />
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="space-y-2">
+                    <Label>{t("smartDispatch.cooldownBaseSeconds")}</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      value={smartDispatchConfig.cooldownBaseMs / 1000}
+                      onChange={(event) =>
+                        setSmartDispatchConfig((prev) => ({
+                          ...prev,
+                          cooldownBaseMs: Number(event.target.value) * 1000,
+                        }))
+                      }
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>{t("smartDispatch.cooldownMaxSeconds")}</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      value={smartDispatchConfig.cooldownMaxMs / 1000}
+                      onChange={(event) =>
+                        setSmartDispatchConfig((prev) => ({
+                          ...prev,
+                          cooldownMaxMs: Number(event.target.value) * 1000,
+                        }))
+                      }
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>{t("smartDispatch.ewmaAlpha")}</Label>
+                    <Input
+                      type="number"
+                      min={0.01}
+                      max={1}
+                      step={0.01}
+                      value={smartDispatchConfig.ewmaAlpha}
+                      onChange={(event) =>
+                        setSmartDispatchConfig((prev) => ({
+                          ...prev,
+                          ewmaAlpha: Number(event.target.value),
+                        }))
+                      }
+                    />
+                  </div>
+                </div>
+              </div>
+            </CollapsibleContent>
+          </div>
+        </Collapsible>
         <Collapsible open={quotaLeaseOpen} onOpenChange={setQuotaLeaseOpen}>
           <div className="p-4 rounded-xl bg-white/[0.02] border border-white/5 hover:bg-white/[0.04] transition-colors">
             <CollapsibleTrigger asChild>

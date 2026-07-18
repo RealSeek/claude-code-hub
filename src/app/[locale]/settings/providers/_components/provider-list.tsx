@@ -6,7 +6,11 @@ import { useMemo } from "react";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { getProviderVendors } from "@/lib/api-client/v1/actions/provider-endpoints";
 import type { CurrencyCode } from "@/lib/utils/currency";
-import type { ProviderDisplay, ProviderStatisticsMap } from "@/types/provider";
+import type {
+  ProviderDisplay,
+  ProviderStatisticsMap,
+  ProviderUpstreamBillingMap,
+} from "@/types/provider";
 import type { User } from "@/types/user";
 import type { EndpointCircuitInfoMap } from "./provider-manager";
 import { ProviderRichListItem } from "./provider-rich-list-item";
@@ -33,6 +37,8 @@ interface ProviderListProps {
   endpointCircuitInfo?: EndpointCircuitInfoMap;
   statistics?: ProviderStatisticsMap;
   statisticsLoading?: boolean;
+  upstreamBilling?: ProviderUpstreamBillingMap;
+  upstreamBillingLoading?: boolean;
   currencyCode?: CurrencyCode;
   enableMultiProviderTypes: boolean;
   activeGroupFilter?: string | null;
@@ -52,6 +58,8 @@ export function ProviderList({
   endpointCircuitInfo = EMPTY_OBJECT,
   statistics = EMPTY_OBJECT,
   statisticsLoading = false,
+  upstreamBilling = EMPTY_OBJECT,
+  upstreamBillingLoading = false,
   currencyCode = "USD",
   enableMultiProviderTypes,
   activeGroupFilter = null,
@@ -103,6 +111,8 @@ export function ProviderList({
             endpointCircuitInfo={endpointCircuitInfo[provider.id]}
             statistics={statistics[provider.id]}
             statisticsLoading={statisticsLoading}
+            upstreamBilling={upstreamBilling[provider.id]}
+            upstreamBillingLoading={upstreamBillingLoading}
             currencyCode={currencyCode}
             enableMultiProviderTypes={enableMultiProviderTypes}
             activeGroupFilter={activeGroupFilter}

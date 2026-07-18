@@ -94,6 +94,10 @@ function makeProviderDisplay(overrides: Partial<ProviderDisplay> = {}): Provider
     priority: 1,
     costMultiplier: 1,
     groupTag: null,
+    upstreamBillingType: "auto",
+    hasUpstreamBillingAccessToken: false,
+    hasUpstreamBillingCookie: false,
+    upstreamBillingUserId: null,
     providerType: "claude",
     providerVendorId: null, // Default to null for legacy check
     preserveClientIp: false,
@@ -146,17 +150,24 @@ function renderWithProviders(node: ReactNode) {
   document.body.appendChild(container);
   const root = createRoot(container);
 
-  act(() => {
+  const render = (nextNode: ReactNode) => {
     root.render(
       <QueryClientProvider client={queryClient}>
         <NextIntlClientProvider locale="en" messages={enMessages} timeZone="UTC">
-          {node}
+          {nextNode}
         </NextIntlClientProvider>
       </QueryClientProvider>
     );
+  };
+
+  act(() => {
+    render(node);
   });
 
   return {
+    rerender: (nextNode: ReactNode) => {
+      act(() => render(nextNode));
+    },
     unmount: () => {
       act(() => root.unmount());
       container.remove();
@@ -267,6 +278,82 @@ describe("ProviderRichListItem Endpoint Display", () => {
     expect(document.body.textContent).toContain("First byte: 0s");
     expect(document.body.textContent).toContain("Stream interval: 0s");
     expect(document.body.textContent).toContain("Non-streaming: 0s");
+
+    unmount();
+  });
+
+  test("余额查询完成后会从骨架屏更新为真实余额", async () => {
+    const provider = makeProviderDisplay();
+    const initial = (
+      <ProviderRichListItem
+        provider={provider}
+        currentUser={ADMIN_USER}
+        upstreamBillingLoading={true}
+        enableMultiProviderTypes={true}
+      />
+    );
+    const { rerender, unmount } = renderWithProviders(initial);
+
+    await flushTicks();
+    expect(document.body.textContent).not.toContain("$12.50");
+
+    rerender(
+      <ProviderRichListItem
+        provider={provider}
+        currentUser={ADMIN_USER}
+        upstreamBillingLoading={false}
+        upstreamBilling={{
+          providerId: provider.id,
+          source: "sub2api",
+          status: "ok",
+          balanceUsd: 12.5,
+          balanceRaw: 12.5,
+          balanceScope: "account",
+          quotaPerUnit: null,
+          effectiveMultiplier: 0.02,
+          observedAt: "2026-07-18T00:00:00.000Z",
+          errorCode: null,
+          balanceAggregation: "single_key",
+        }}
+        enableMultiProviderTypes={true}
+      />
+    );
+
+    await flushTicks();
+    expect(document.body.textContent).toContain("$12.50");
+    expect(document.body.textContent).toContain("sub2api · 0.02x");
+
+    unmount();
+  });
+
+  test("New-API 显示有限账户余额与 Token 分组倍率", async () => {
+    const provider = makeProviderDisplay({ upstreamBillingType: "new-api" });
+    const { unmount } = renderWithProviders(
+      <ProviderRichListItem
+        provider={provider}
+        currentUser={ADMIN_USER}
+        upstreamBillingLoading={false}
+        upstreamBilling={{
+          providerId: provider.id,
+          source: "new-api",
+          status: "ok",
+          balanceUsd: 2.5,
+          balanceRaw: 1_250_000,
+          balanceScope: "account",
+          quotaPerUnit: 500_000,
+          effectiveMultiplier: 0.1,
+          observedAt: "2026-07-18T00:00:00.000Z",
+          errorCode: null,
+          balanceAggregation: "single_key",
+        }}
+        enableMultiProviderTypes={true}
+      />
+    );
+
+    await flushTicks();
+    expect(document.body.textContent).toContain("$2.50");
+    expect(document.body.textContent).toContain("new-api · 0.1x");
+    expect(document.body.textContent).not.toContain("Unlimited quota");
 
     unmount();
   });

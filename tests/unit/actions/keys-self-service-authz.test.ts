@@ -25,16 +25,20 @@ const findKeyByIdMock = vi.fn();
 const countActiveKeysByUserMock = vi.fn();
 const findKeyListMock = vi.fn();
 const deleteKeyMock = vi.fn();
+const deleteKeyAtomicallyMock = vi.fn();
 const updateKeyMock = vi.fn();
+const updateKeyEnabledAtomicallyMock = vi.fn();
 vi.mock("@/repository/key", () => ({
   countActiveKeysByUser: countActiveKeysByUserMock,
   createKey: vi.fn(async () => ({})),
   deleteKey: deleteKeyMock,
+  deleteKeyAtomically: deleteKeyAtomicallyMock,
   findActiveKeyByUserIdAndName: vi.fn(async () => null),
   findKeyById: findKeyByIdMock,
   findKeyList: findKeyListMock,
   findKeysWithStatistics: vi.fn(async () => []),
   resetKeyCostResetAt: vi.fn(),
+  updateKeyEnabledAtomically: updateKeyEnabledAtomicallyMock,
   updateKey: updateKeyMock,
 }));
 
@@ -71,7 +75,9 @@ const adminSession = { user: { id: 1, role: "admin" }, key: { canLoginWebUi: tru
 beforeEach(() => {
   vi.clearAllMocks();
   deleteKeyMock.mockResolvedValue(true);
+  deleteKeyAtomicallyMock.mockResolvedValue({ ok: true, key: "sk-test" });
   updateKeyMock.mockResolvedValue({});
+  updateKeyEnabledAtomicallyMock.mockResolvedValue({ ok: true, key: "sk-test" });
   findKeyByIdMock.mockResolvedValue({ ...OWN_KEY });
   findUserByIdMock.mockResolvedValue({ id: 99, providerGroup: "default" });
   countActiveKeysByUserMock.mockResolvedValue(5);
@@ -102,7 +108,7 @@ describe("removeKey read-only session guard", () => {
     const result = await removeKey(42);
 
     expect(result.ok).toBe(true);
-    expect(deleteKeyMock).toHaveBeenCalledWith(42);
+    expect(deleteKeyAtomicallyMock).toHaveBeenCalledWith(42);
   });
 });
 
@@ -191,7 +197,7 @@ describe("toggleKeyEnabled self-service authorization", () => {
     const result = await toggleKeyEnabled(42, false);
 
     expect(result.ok).toBe(true);
-    expect(updateKeyMock).toHaveBeenCalledWith(42, { is_enabled: false });
+    expect(updateKeyEnabledAtomicallyMock).toHaveBeenCalledWith(42, false);
   });
 });
 

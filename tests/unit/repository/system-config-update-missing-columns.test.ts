@@ -339,10 +339,10 @@ describe("SystemSettings：数据库缺列时的保存兜底", () => {
     expect(result.siteTitle).toBe("Claude Code Hub");
     expect(result.enableHttp2).toBe(true);
 
-    // 关键回归保护：第二次 select 必须恰好剥离了新列（最外层降级），
-    // 而非旧行为先剥离 enableThinkingEffortConflictRectifier。若新列未加入降级链最外层，下面两条断言会失败。
+    // 关键回归保护：第二次 select 必须恰好剥离了 smartDispatchConfig（最外层降级）。
     const secondSelection = selectMock.mock.calls[1]?.[0] as Record<string, unknown>;
-    expect(secondSelection).not.toHaveProperty("enableGeminiFunctionIdRectifier");
+    expect(secondSelection).not.toHaveProperty("smartDispatchConfig");
+    expect(secondSelection).toHaveProperty("enableGeminiFunctionIdRectifier");
     expect(secondSelection).toHaveProperty("enableThinkingEffortConflictRectifier");
 
     vi.useRealTimers();

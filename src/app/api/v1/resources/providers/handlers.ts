@@ -24,6 +24,9 @@ import {
 } from "@/lib/api/v1/_shared/response-helpers";
 import {
   HIDDEN_PROVIDER_TYPES,
+  ProviderApiKeysResponseSchema,
+  ProviderApiKeysRevealResponseSchema,
+  ProviderApiKeysUpdateSchema,
   ProviderApiTestSchema,
   ProviderBatchPatchApplySchema,
   ProviderBatchPatchPreviewSchema,
@@ -106,6 +109,66 @@ export async function getProvider(c: Context): Promise<Response> {
   return jsonResponse(sanitizeProvider(provider));
 }
 
+export async function getProviderApiKeys(c: Context): Promise<Response> {
+  const id = Number(c.req.param("id"));
+  const provider = await findVisibleProvider(c, id);
+  if (provider instanceof Response) return provider;
+  if (!provider) return providerNotFound(c);
+  const providerActions = await import("@/actions/providers");
+  const result = await callAction(
+    c,
+    providerActions.getProviderApiKeys,
+    [id] as never[],
+    c.get("auth")
+  );
+  if (!result.ok) return actionError(c, result);
+  return jsonResponse(ProviderApiKeysResponseSchema.parse(result.data));
+}
+
+export async function revealProviderApiKeys(c: Context): Promise<Response> {
+  const id = Number(c.req.param("id"));
+  const provider = await findVisibleProvider(c, id);
+  if (provider instanceof Response) return provider;
+  if (!provider) return providerNotFound(c);
+  const providerActions = await import("@/actions/providers");
+  const result = await callAction(
+    c,
+    providerActions.getUnmaskedProviderKeys,
+    [id] as never[],
+    c.get("auth")
+  );
+  if (!result.ok) return actionError(c, result);
+  return jsonResponse(ProviderApiKeysRevealResponseSchema.parse(result.data), {
+    headers: withNoStoreHeaders(),
+  });
+}
+
+export async function updateProviderApiKeys(c: Context): Promise<Response> {
+  const id = Number(c.req.param("id"));
+  const body = await parseHonoJsonBody(c, ProviderApiKeysUpdateSchema);
+  if (!body.ok) return body.response;
+  if (hasLegacyRedactedWritePlaceholders(body.data)) {
+    return createProblemResponse({
+      status: 422,
+      instance: new URL(c.req.url).pathname,
+      errorCode: "provider.redacted_placeholder_rejected",
+      detail: "Redacted placeholders cannot be used when updating provider keys.",
+    });
+  }
+  const provider = await findVisibleProvider(c, id);
+  if (provider instanceof Response) return provider;
+  if (!provider) return providerNotFound(c);
+  const providerActions = await import("@/actions/providers");
+  const result = await callAction(
+    c,
+    providerActions.editProvider,
+    [id, body.data] as never[],
+    c.get("auth")
+  );
+  if (!result.ok) return actionError(c, result);
+  return getProviderApiKeys(c);
+}
+
 export async function createProvider(c: Context): Promise<Response> {
   const body = await parseHonoJsonBody(c, ProviderCreateSchema);
   if (!body.ok) return body.response;
@@ -118,10 +181,17 @@ export async function createProvider(c: Context): Promise<Response> {
     });
   }
   const providerActions = await import("@/actions/providers");
+  const { rpm_limit, max_concurrency, ...providerCreateData } = body.data;
   const result = await callAction(
     c,
     providerActions.addProvider,
-    [body.data] as never[],
+    [
+      {
+        ...providerCreateData,
+        ...(rpm_limit !== undefined ? { rpm: rpm_limit } : {}),
+        ...(max_concurrency !== undefined ? { cc: max_concurrency } : {}),
+      },
+    ] as never[],
     c.get("auth")
   );
   if (!result.ok) return actionError(c, result);
@@ -152,7 +222,10 @@ export async function updateProvider(c: Context): Promise<Response> {
   const existing = await findVisibleProvider(c, id);
   if (existing instanceof Response) return existing;
   if (!existing) return providerNotFound(c);
-  if (body.data.key !== undefined && hasLegacyRedactedWritePlaceholders(body.data.key)) {
+  if (
+    (body.data.key !== undefined && hasLegacyRedactedWritePlaceholders(body.data.key)) ||
+    (body.data.api_keys !== undefined && hasLegacyRedactedWritePlaceholders(body.data.api_keys))
+  ) {
     return createProblemResponse({
       status: 422,
       instance: new URL(c.req.url).pathname,
@@ -171,10 +244,18 @@ export async function updateProvider(c: Context): Promise<Response> {
 
   const updatePayload = preserveRedactedProviderUpdateFields(body.data, existing);
   const providerActions = await import("@/actions/providers");
+  const { rpm_limit, max_concurrency, ...providerUpdateData } = updatePayload;
   const result = await callAction(
     c,
     providerActions.editProvider,
-    [id, updatePayload] as never[],
+    [
+      id,
+      {
+        ...providerUpdateData,
+        ...(rpm_limit !== undefined ? { rpm: rpm_limit } : {}),
+        ...(max_concurrency !== undefined ? { cc: max_concurrency } : {}),
+      },
+    ] as never[],
     c.get("auth")
   );
   if (!result.ok) return actionError(c, result);
@@ -314,6 +395,42 @@ export async function getProviderLimitBatch(c: Context): Promise<Response> {
   return jsonResponse({
     items: Array.from(result.data.entries()).map(([id, usage]) => ({ id, usage })),
   });
+}
+
+export async function getProviderUpstreamBillingBatch(c: Context): Promise<Response> {
+  const body = await parseJson(c, ProviderIdsBodySchema);
+  if (body instanceof Response) return body;
+  const visibilityError = await ensureVisibleProviderIds(c, body.providerIds);
+  if (visibilityError) return visibilityError;
+
+  const billingActions = await import("@/actions/provider-upstream-billing");
+  const result = await callAction(
+    c,
+    billingActions.getProviderUpstreamBillingBatch,
+    [body.providerIds] as never[],
+    c.get("auth")
+  );
+  return result.ok
+    ? jsonResponse({ items: result.data }, { headers: withNoStoreHeaders() })
+    : actionError(c, result);
+}
+
+export async function syncProviderCostMultiplier(c: Context): Promise<Response> {
+  const id = Number(c.req.param("id"));
+  const existing = await findVisibleProvider(c, id);
+  if (existing instanceof Response) return existing;
+  if (!existing) return providerNotFound(c);
+
+  const billingActions = await import("@/actions/provider-upstream-billing");
+  const result = await callAction(
+    c,
+    billingActions.syncProviderCostMultiplier,
+    [id] as never[],
+    c.get("auth")
+  );
+  return result.ok
+    ? jsonResponse(result.data, { headers: withNoStoreHeaders() })
+    : actionError(c, result);
 }
 
 export async function listProviderGroups(c: Context): Promise<Response> {
@@ -610,12 +727,19 @@ function sanitizeProvider(
     name: provider.name,
     url: redactUrlCredentials(provider.url) ?? provider.url,
     maskedKey: provider.maskedKey,
+    keyStrategy: provider.keyStrategy,
+    apiKeyCount: provider.apiKeyCount,
     isEnabled: provider.isEnabled,
     weight: provider.weight,
     priority: provider.priority,
     groupPriorities: provider.groupPriorities,
     costMultiplier: provider.costMultiplier,
     groupTag: provider.groupTag,
+    upstreamBillingType: provider.upstreamBillingType,
+    hasUpstreamBillingAccessToken: provider.hasUpstreamBillingAccessToken,
+    hasUpstreamBillingCookie: provider.hasUpstreamBillingCookie,
+    upstreamBillingUserId: provider.upstreamBillingUserId,
+    upstreamBillingRefreshIntervalMinutes: provider.upstreamBillingRefreshIntervalMinutes,
     providerType: provider.providerType as ProviderSummaryResponse["providerType"],
     providerVendorId: provider.providerVendorId,
     preserveClientIp: provider.preserveClientIp,
@@ -638,6 +762,8 @@ function sanitizeProvider(
     limitTotalUsd: provider.limitTotalUsd,
     totalCostResetAt: provider.totalCostResetAt?.toISOString() ?? null,
     limitConcurrentSessions: provider.limitConcurrentSessions,
+    rpmLimit: provider.rpm,
+    maxConcurrency: provider.cc,
     maxRetryAttempts: provider.maxRetryAttempts,
     circuitBreakerFailureThreshold: provider.circuitBreakerFailureThreshold,
     circuitBreakerOpenDuration: provider.circuitBreakerOpenDuration,

@@ -1004,6 +1004,13 @@ export async function categorizeErrorAsync(error: Error): Promise<ErrorCategory>
 
       case ErrorLevel.Client:
         // Client 级错误（408、413 等）→ 检查是否为不可重试错误
+        if (
+          error.statusCode === 404 &&
+          /model\s+not\s+found|model_not_found|unknown\s+model|does\s+not\s+exist/i.test(body ?? "")
+        ) {
+          // ccLoad 将模型不存在视为 Client；保留 CCH 的资源错误类别以避免无意义熔断。
+          return ErrorCategory.RESOURCE_NOT_FOUND;
+        }
         if (await isNonRetryableClientErrorAsync(error)) {
           return ErrorCategory.NON_RETRYABLE_CLIENT_ERROR;
         }

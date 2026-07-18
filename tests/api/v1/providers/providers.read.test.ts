@@ -97,6 +97,10 @@ function provider(overrides: Partial<ProviderDisplay> = {}): ProviderDisplay {
     groupPriorities: null,
     costMultiplier: 1,
     groupTag: "default",
+    upstreamBillingType: "new-api",
+    hasUpstreamBillingAccessToken: true,
+    hasUpstreamBillingCookie: true,
+    upstreamBillingUserId: "42",
     providerType: "claude",
     providerVendorId: 1,
     preserveClientIp: false,
@@ -465,7 +469,12 @@ describe("v1 providers read endpoints", () => {
       },
       mcpPassthroughUrl: "https://REDACTED:REDACTED@mcp.example.com/bridge",
       websiteUrl: "https://REDACTED:REDACTED@anthropic.example.com/",
+      hasUpstreamBillingAccessToken: true,
+      hasUpstreamBillingCookie: true,
+      upstreamBillingUserId: "42",
     });
+    expect(firstProvider).not.toHaveProperty("upstreamBillingAccessToken");
+    expect(firstProvider).not.toHaveProperty("upstreamBillingCookie");
     expect(JSON.stringify(list.json)).not.toContain("upstream-secret");
     expect(JSON.stringify(list.json)).not.toContain("proxy-pass");
     expect(JSON.stringify(list.json)).not.toContain("mcp-pass");

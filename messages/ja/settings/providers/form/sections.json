@@ -15,6 +15,36 @@
     "auth": {
       "title": "認証",
       "desc": "認証用の API キーを入力"
+    },
+    "upstreamBillingType": {
+      "label": "上流課金システム",
+      "desc": "アカウント残高の照会と倍率同期に使用する上流プロトコルを指定します",
+      "options": {
+        "auto": "自動検出",
+        "newApi": "New-API（アカウント残高と Token グループ倍率）",
+        "sub2api": "sub2api（残高と倍率）"
+      }
+    },
+    "upstreamBillingRefreshInterval": {
+      "label": "自動更新間隔（分）",
+      "desc": "残高と取得可能な倍率を定期的に更新します。0 で定期更新を無効化します。成功したリクエストによる更新は 10 分間重複排除されます",
+      "placeholder": "例: 30"
+    },
+    "newApiAccount": {
+      "userId": {
+        "label": "New-API ユーザー ID",
+        "desc": "残高照会時に New-Api-User ヘッダーとして送信します",
+        "placeholder": "例: 1"
+      },
+      "cookie": {
+        "label": "New-API Session Cookie",
+        "desc": "ログイン後の完全な Cookie（session=...）です。プロバイダー API キーではありません",
+        "configured": "アカウント認証情報は設定済みです。空欄の場合は現在の Cookie を保持します",
+        "placeholder": "完全な Session Cookie を入力",
+        "leaveEmpty": "空欄の場合は現在の Cookie を保持",
+        "show": "Session Cookie を表示",
+        "hide": "Session Cookie を非表示"
+      }
     }
   },
   "apiTest": {
@@ -132,6 +162,16 @@
     "limitConcurrent": {
       "label": "同時セッション上限",
       "placeholder": "0 は無制限"
+    },
+    "rpm": {
+      "label": "プロバイダー毎分リクエスト上限",
+      "placeholder": "0 は無制限",
+      "unit": "RPM"
+    },
+    "providerConcurrency": {
+      "label": "プロバイダー処理中リクエスト上限",
+      "placeholder": "0 は無制限",
+      "unit": "リクエスト"
     },
     "limitDaily": {
       "label": "1日の支出上限 (USD)",

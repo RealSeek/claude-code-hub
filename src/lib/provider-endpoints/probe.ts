@@ -8,6 +8,7 @@ import {
   resetEndpointCircuit,
 } from "@/lib/endpoint-circuit-breaker";
 import { logger } from "@/lib/logger";
+import { recordSmartEndpointSuccess } from "@/lib/smart-dispatch";
 import { findProviderEndpointById, recordProviderEndpointProbeResult } from "@/repository";
 import type { ProviderEndpoint, ProviderEndpointProbeSource } from "@/types/provider";
 
@@ -170,14 +171,15 @@ async function tryProbe(
     );
 
     const statusCode = response.status;
-    const ok = statusCode < 500;
+    // Endpoint 探测至少要证明 HTTP 路径可处理请求；认证、路由和方法错误不能清除熔断状态。
+    const ok = statusCode >= 200 && statusCode < 400;
 
     return {
       ok,
       method,
       statusCode,
       latencyMs,
-      errorType: ok ? null : "http_5xx",
+      errorType: ok ? null : statusCode >= 500 ? "http_5xx" : "http_4xx",
       errorMessage: ok ? null : `HTTP ${statusCode}`,
     };
   } catch (error) {
@@ -209,9 +211,9 @@ export async function probeEndpointUrl(
     return probeEndpointTcp(url, timeoutMs);
   }
 
-  // HTTP-based probing: try HEAD first, fallback to GET on network failure
+  // HTTP 探测优先 HEAD；上游不支持 HEAD 时回退 GET。
   const head = await tryProbe(url, "HEAD", timeoutMs);
-  if (head.statusCode === null) {
+  if (head.statusCode === null || head.statusCode === 405) {
     return tryProbe(url, "GET", timeoutMs);
   }
   return head;
@@ -235,6 +237,9 @@ export async function probeProviderEndpointAndRecordByEndpoint(input: {
       : result.errorType || "probe_failed";
     await recordEndpointFailure(input.endpoint.id, new Error(message));
   } else {
+    if (result.latencyMs != null && Number.isFinite(result.latencyMs)) {
+      recordSmartEndpointSuccess(input.endpoint.id, result.latencyMs);
+    }
     // Probe success: best-effort reset circuit breaker state (cross-instance safe).
     // Note: do not rely on in-memory state only; Redis may contain open/half-open state from another instance.
     if (getEnvConfig().ENABLE_ENDPOINT_CIRCUIT_BREAKER) {

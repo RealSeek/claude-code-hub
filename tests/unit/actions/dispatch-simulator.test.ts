@@ -1,4 +1,13 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
+import {
+  recordProviderApiKeyFailure,
+  resetProviderKeyDispatchState,
+} from "@/lib/provider-key-dispatch";
+import {
+  recordSmartProviderFailure,
+  recordSmartProviderSuccess,
+  resetSmartDispatchState,
+} from "@/lib/smart-dispatch";
 import type { Provider } from "@/types/provider";
 
 const authMocks = vi.hoisted(() => ({
@@ -120,6 +129,9 @@ function createProvider(id: number, overrides: Partial<Provider> = {}): Provider
 describe("dispatch simulator", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.unstubAllEnvs();
+    resetProviderKeyDispatchState();
+    resetSmartDispatchState();
     endpointSelectorMocks.getEndpointFilterStats.mockResolvedValue({
       total: 2,
       enabled: 2,
@@ -203,6 +215,148 @@ describe("dispatch simulator", () => {
       circuitOpen: 0,
       available: 2,
     });
+  });
+
+  test("按当前可用 Key 数展示 Provider 的实际调度权重", async () => {
+    const { simulateDispatchDecisionTree } = await import("@/actions/dispatch-simulator");
+    const key = (id: number, providerId: number) => ({
+      id,
+      providerId,
+      key: `key-${id}`,
+      label: null,
+      isEnabled: true,
+      sortOrder: id,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    const providers = [
+      createProvider(21, {
+        keyStrategy: "sequential",
+        apiKeys: [key(211, 21), key(212, 21), key(213, 21)],
+      }),
+      createProvider(22, {
+        keyStrategy: "sequential",
+        apiKeys: [key(221, 22)],
+      }),
+    ];
+
+    const result = await simulateDispatchDecisionTree(
+      providers,
+      {
+        clientFormat: "claude",
+        modelName: "claude-opus-4-1",
+        groupTags: ["alpha"],
+      },
+      { systemTimezone: "UTC" }
+    );
+
+    expect(result.priorityTiers[0].providers).toEqual([
+      expect.objectContaining({
+        id: 21,
+        readyKeyCount: 3,
+        effectiveWeight: 3,
+        weightPercent: 75,
+      }),
+      expect.objectContaining({
+        id: 22,
+        readyKeyCount: 1,
+        effectiveWeight: 1,
+        weightPercent: 25,
+      }),
+    ]);
+  });
+
+  test("排除冷却候选，并在全池冷却时只展示最早恢复的 Provider", async () => {
+    const { simulateDispatchDecisionTree } = await import("@/actions/dispatch-simulator");
+    const key = (id: number, providerId: number) => ({
+      id,
+      providerId,
+      key: `key-${id}`,
+      label: null,
+      isEnabled: true,
+      sortOrder: id,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    const providers = [
+      createProvider(31, {
+        keyStrategy: "sequential",
+        apiKeys: [key(311, 31)],
+      }),
+      createProvider(32, {
+        keyStrategy: "sequential",
+        apiKeys: [key(321, 32)],
+      }),
+    ];
+    const now = Date.now();
+    recordProviderApiKeyFailure(311, now + 120_000);
+
+    const oneReady = await simulateDispatchDecisionTree(
+      providers,
+      {
+        clientFormat: "claude",
+        modelName: "claude-opus-4-1",
+        groupTags: ["alpha"],
+      },
+      { systemTimezone: "UTC" }
+    );
+    expect(oneReady.priorityTiers[0].providers.map((provider) => provider.id)).toEqual([32]);
+
+    recordProviderApiKeyFailure(321, now + 30_000);
+    const earliestKeyRecovery = await simulateDispatchDecisionTree(
+      providers,
+      {
+        clientFormat: "claude",
+        modelName: "claude-opus-4-1",
+        groupTags: ["alpha"],
+      },
+      { systemTimezone: "UTC" }
+    );
+    expect(earliestKeyRecovery.priorityTiers[0].providers.map((provider) => provider.id)).toEqual([
+      32,
+    ]);
+
+    recordSmartProviderFailure(32, now + 180_000);
+    const earliestCombinedRecovery = await simulateDispatchDecisionTree(
+      providers,
+      {
+        clientFormat: "claude",
+        modelName: "claude-opus-4-1",
+        groupTags: ["alpha"],
+      },
+      { systemTimezone: "UTC" }
+    );
+    expect(
+      earliestCombinedRecovery.priorityTiers[0].providers.map((provider) => provider.id)
+    ).toEqual([31]);
+  });
+
+  test("按运行时健康分数划分候选层，而不是只看基础优先级", async () => {
+    vi.stubEnv("SMART_DISPATCH_HEALTH_SCORE_ENABLED", "true");
+    vi.stubEnv("SMART_DISPATCH_MIN_CONFIDENT_SAMPLE", "1");
+    vi.stubEnv("SMART_DISPATCH_SUCCESS_RATE_PENALTY_WEIGHT", "1");
+    const { simulateDispatchDecisionTree } = await import("@/actions/dispatch-simulator");
+    const degraded = createProvider(41);
+    const healthy = createProvider(42);
+    recordSmartProviderFailure(degraded.id);
+    recordSmartProviderSuccess(degraded.id);
+    recordSmartProviderSuccess(healthy.id);
+
+    const result = await simulateDispatchDecisionTree(
+      [degraded, healthy],
+      {
+        clientFormat: "claude",
+        modelName: "claude-opus-4-1",
+        groupTags: ["alpha"],
+      },
+      { systemTimezone: "UTC" }
+    );
+
+    expect(result.priorityTiers[0].providers.map((provider) => provider.id)).toEqual([42]);
+    expect(result.priorityTiers[0].isSelected).toBe(true);
+    expect(result.priorityTiers[1].providers.map((provider) => provider.id)).toEqual([41]);
+    expect(result.priorityTiers[1].isSelected).toBe(false);
+    expect(result.finalCandidateCount).toBe(1);
   });
 
   test("skips model allowlist filtering for resource-style requests without model", async () => {

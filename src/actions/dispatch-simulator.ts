@@ -13,8 +13,18 @@ import { getCircuitState, isCircuitOpen } from "@/lib/circuit-breaker";
 import { PROVIDER_GROUP } from "@/lib/constants/provider.constants";
 import { logger } from "@/lib/logger";
 import { getEndpointFilterStats } from "@/lib/provider-endpoints/endpoint-selector";
+import { providerReadyAt, readyProviderApiKeyCount } from "@/lib/provider-key-dispatch";
 import { getProviderModelRedirectTarget } from "@/lib/provider-model-redirects";
 import { RateLimitService } from "@/lib/rate-limit";
+import {
+  getSmartDispatchConfig,
+  hydrateSmartProviderStates,
+  isSmartProviderCooled,
+  refreshSmartDispatchConfig,
+  smartProviderEffectivePriority,
+  smartProviderEffectiveWeight,
+  smartProviderReadyAt,
+} from "@/lib/smart-dispatch";
 import { resolveSystemTimezone } from "@/lib/utils/timezone";
 import { isVendorTypeCircuitOpen } from "@/lib/vendor-type-circuit-breaker";
 import { findAllProvidersFresh } from "@/repository/provider";
@@ -104,6 +114,72 @@ function buildStep(
   };
 }
 
+async function filterByDispatchCooldown(
+  providers: Provider[],
+  userGroup: string | null,
+  now: number
+): Promise<{
+  providers: Provider[];
+  filteredOut: DispatchSimulatorProviderSnapshot[];
+}> {
+  if (providers.length === 0) return { providers: [], filteredOut: [] };
+
+  await refreshSmartDispatchConfig();
+  await hydrateSmartProviderStates(providers.map((provider) => provider.id));
+  const smartEnabled = getSmartDispatchConfig().enabled;
+  const availability = await Promise.all(
+    providers.map(async (provider) => ({
+      provider,
+      readyKeyCount: await readyProviderApiKeyCount(provider, now),
+      providerCooled: smartEnabled && isSmartProviderCooled(provider.id, now),
+    }))
+  );
+  const available = availability.filter((item) => !item.providerCooled && item.readyKeyCount > 0);
+  if (available.length > 0) {
+    const availableIds = new Set(available.map((item) => item.provider.id));
+    return {
+      providers: available.map((item) => item.provider),
+      filteredOut: availability
+        .filter((item) => !availableIds.has(item.provider.id))
+        .map((item) =>
+          buildProviderSnapshot(item.provider, userGroup, {
+            readyKeyCount: item.readyKeyCount,
+            details: item.providerCooled ? "provider_smart_cooldown" : "all_provider_keys_cooled",
+          })
+        ),
+    };
+  }
+
+  const fallbackCandidates = await Promise.all(
+    availability.map(async (item) => ({
+      ...item,
+      readyAt: Math.max(
+        smartEnabled ? smartProviderReadyAt(item.provider.id) : now,
+        await providerReadyAt(item.provider, now)
+      ),
+    }))
+  );
+  fallbackCandidates.sort((a, b) => {
+    const readyDiff = a.readyAt - b.readyAt;
+    if (readyDiff !== 0) return readyDiff;
+    const priorityDiff =
+      smartProviderEffectivePriority(b.provider, providers, undefined, userGroup) -
+      smartProviderEffectivePriority(a.provider, providers, undefined, userGroup);
+    if (priorityDiff !== 0) return priorityDiff;
+    return a.provider.id - b.provider.id;
+  });
+  const selected = fallbackCandidates[0];
+  return {
+    providers: selected ? [selected.provider] : [],
+    filteredOut: fallbackCandidates.slice(1).map((item) =>
+      buildProviderSnapshot(item.provider, userGroup, {
+        readyKeyCount: item.readyKeyCount,
+        details: "cooldown_fallback_later_recovery",
+      })
+    ),
+  };
+}
+
 async function buildPriorityTiers(
   providers: Provider[],
   userGroup: string | null,
@@ -113,9 +189,12 @@ async function buildPriorityTiers(
     return [];
   }
 
+  const dispatchNow = Date.now();
   const enriched = await Promise.all(
     providers.map(async (provider) => ({
       provider,
+      smartScore: smartProviderEffectivePriority(provider, providers, undefined, userGroup),
+      readyKeyCount: await readyProviderApiKeyCount(provider, dispatchNow),
       redirectedModel: modelName
         ? getProviderModelRedirectTarget(modelName, provider.modelRedirects)
         : null,
@@ -123,39 +202,48 @@ async function buildPriorityTiers(
     }))
   );
 
-  const priorities = [
-    ...new Set(
-      enriched.map(({ provider }) =>
-        ProxyProviderResolver.resolveEffectivePriority(provider, userGroup)
-      )
-    ),
-  ].sort((a, b) => a - b);
-  const selectedPriority = priorities[0] ?? null;
+  const ranked = [...enriched].sort(
+    (a, b) => b.smartScore - a.smartScore || a.provider.id - b.provider.id
+  );
+  const scoreTiers: Array<{ smartScore: number; items: typeof enriched }> = [];
+  for (const item of ranked) {
+    const currentTier = scoreTiers[scoreTiers.length - 1];
+    if (!currentTier || Math.abs(currentTier.smartScore - item.smartScore) >= 0.1) {
+      scoreTiers.push({ smartScore: item.smartScore, items: [item] });
+    } else {
+      currentTier.items.push(item);
+    }
+  }
 
-  return priorities.map((priority) => {
-    const providersAtPriority = enriched.filter(
-      ({ provider }) =>
-        ProxyProviderResolver.resolveEffectivePriority(provider, userGroup) === priority
-    );
-    const totalWeight = providersAtPriority.reduce((sum, item) => sum + item.provider.weight, 0);
+  return scoreTiers.map((tier, tierIndex) => {
+    const weightedProviders = tier.items.map((item) => ({
+      ...item,
+      effectiveWeight: smartProviderEffectiveWeight(item.provider, item.readyKeyCount),
+    }));
+    const totalWeight = weightedProviders.reduce((sum, item) => sum + item.effectiveWeight, 0);
 
-    const mappedProviders: DispatchSimulatorPriorityProvider[] = providersAtPriority.map(
-      ({ provider, redirectedModel, endpointStats }) => ({
+    const mappedProviders: DispatchSimulatorPriorityProvider[] = weightedProviders.map(
+      ({ provider, readyKeyCount, effectiveWeight, redirectedModel, endpointStats }) => ({
         ...buildProviderSnapshot(provider, userGroup, {
+          readyKeyCount,
+          effectiveWeight,
           redirectedModel,
           endpointStats,
         }),
         weightPercent:
-          totalWeight > 0
-            ? (provider.weight / totalWeight) * 100
-            : 100 / providersAtPriority.length,
+          totalWeight > 0 ? (effectiveWeight / totalWeight) * 100 : 100 / weightedProviders.length,
       })
     );
 
     return {
-      priority,
+      priority: Math.min(
+        ...tier.items.map(({ provider }) =>
+          ProxyProviderResolver.resolveEffectivePriority(provider, userGroup)
+        )
+      ),
+      smartScore: tier.smartScore,
       providers: mappedProviders,
-      isSelected: priority === selectedPriority,
+      isSelected: tierIndex === 0,
     };
   });
 }
@@ -343,10 +431,22 @@ export async function simulateDispatchDecisionTree(
     healthyProviders.push(provider);
   }
 
-  steps.push(
-    buildStep("healthAndLimits", 6, currentProviders, healthyProviders, healthFiltered, groupFilter)
+  const dispatchCooldown = await filterByDispatchCooldown(
+    healthyProviders,
+    groupFilter,
+    Date.now()
   );
-  currentProviders = healthyProviders;
+  steps.push(
+    buildStep(
+      "healthAndLimits",
+      6,
+      currentProviders,
+      dispatchCooldown.providers,
+      [...healthFiltered, ...dispatchCooldown.filteredOut],
+      groupFilter
+    )
+  );
+  currentProviders = dispatchCooldown.providers;
 
   const priorityTiers = await buildPriorityTiers(
     currentProviders,
@@ -444,7 +544,7 @@ export async function simulateDispatchAction(
   rawInput: DispatchSimulatorInput
 ): Promise<ActionResult<DispatchSimulatorResult>> {
   const session = await getSession();
-  if (!session || session.user.role !== "admin") {
+  if (session?.user.role !== "admin") {
     return {
       ok: false,
       error: DISPATCH_SIMULATOR_ERROR_CODES.PERMISSION_DENIED,

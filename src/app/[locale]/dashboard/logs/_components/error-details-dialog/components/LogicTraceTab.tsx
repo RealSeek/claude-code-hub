@@ -580,7 +580,7 @@ export function LogicTraceTab({
                                             <span className="font-medium">{c.name}</span>
                                             <div className="flex items-center gap-2">
                                               <span className="text-muted-foreground">
-                                                W:{c.weight}
+                                                W:{c.effectiveWeight ?? c.weight}
                                               </span>
                                               <span className="text-muted-foreground">
                                                 x{c.costMultiplier}
@@ -752,7 +752,9 @@ export function LogicTraceTab({
                             >
                               <span className="font-medium">{c.name}</span>
                               <div className="flex items-center gap-2">
-                                <span className="text-muted-foreground">W:{c.weight}</span>
+                                <span className="text-muted-foreground">
+                                  W:{c.effectiveWeight ?? c.weight}
+                                </span>
                                 <span className="text-muted-foreground">x{c.costMultiplier}</span>
                                 {formattedProbability && (
                                   <Badge variant="secondary" className="text-[10px]">

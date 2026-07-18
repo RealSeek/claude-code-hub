@@ -459,6 +459,17 @@ export async function register() {
         });
       }
 
+      try {
+        const { startProviderUpstreamBillingScheduler } = await import(
+          "@/lib/provider-upstream-billing-scheduler"
+        );
+        startProviderUpstreamBillingScheduler();
+      } catch (error) {
+        logger.warn("[Instrumentation] Failed to start provider upstream billing scheduler", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+
       // 初始化端点熔断器（禁用时清理残留状态）
       try {
         const { initEndpointCircuitBreaker } = await import("@/lib/endpoint-circuit-breaker");
@@ -596,6 +607,17 @@ export async function register() {
           startPublicStatusRebuildScheduler();
         } catch (error) {
           logger.warn("[Instrumentation] Failed to start public status rebuild scheduler", {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+
+        try {
+          const { startProviderUpstreamBillingScheduler } = await import(
+            "@/lib/provider-upstream-billing-scheduler"
+          );
+          startProviderUpstreamBillingScheduler();
+        } catch (error) {
+          logger.warn("[Instrumentation] Failed to start provider upstream billing scheduler", {
             error: error instanceof Error ? error.message : String(error),
           });
         }

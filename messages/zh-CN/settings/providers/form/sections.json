@@ -15,6 +15,36 @@
     "auth": {
       "title": "身份认证",
       "desc": "提供用于认证的 API 密钥"
+    },
+    "upstreamBillingType": {
+      "label": "上游计费系统",
+      "desc": "指定账户余额查询与倍率同步所使用的上游协议",
+      "options": {
+        "auto": "自动识别",
+        "newApi": "New-API（账户余额与 Token 分组倍率）",
+        "sub2api": "sub2api（余额与倍率）"
+      }
+    },
+    "upstreamBillingRefreshInterval": {
+      "label": "主动更新间隔（分钟）",
+      "desc": "定时兜底更新余额与可用倍率；填 0 关闭定时更新。请求成功后的刷新仍按 10 分钟去重",
+      "placeholder": "例如 30"
+    },
+    "newApiAccount": {
+      "userId": {
+        "label": "New-API 用户 ID",
+        "desc": "作为 New-Api-User 请求头查询账户余额",
+        "placeholder": "例如 1"
+      },
+      "cookie": {
+        "label": "New-API Session Cookie",
+        "desc": "填写登录后的完整 Cookie，例如 session=...；不是供应商 API Key",
+        "configured": "已配置账户凭据；留空将保持当前 Cookie",
+        "placeholder": "输入完整 Session Cookie",
+        "leaveEmpty": "留空保持当前 Cookie",
+        "show": "显示 Session Cookie",
+        "hide": "隐藏 Session Cookie"
+      }
     }
   },
   "routing": {
@@ -338,6 +368,16 @@
     "limitConcurrent": {
       "label": "并发 Session 上限",
       "placeholder": "0 表示无限制"
+    },
+    "rpm": {
+      "label": "供应商每分钟请求上限",
+      "placeholder": "0 表示无限制",
+      "unit": "RPM"
+    },
+    "providerConcurrency": {
+      "label": "供应商在途请求上限",
+      "placeholder": "0 表示无限制",
+      "unit": "请求"
     },
     "limit5hResetMode": {
       "label": "5小时重置模式",

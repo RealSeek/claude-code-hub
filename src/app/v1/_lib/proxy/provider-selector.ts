@@ -2,8 +2,26 @@ import { matchesAllowedModelRules } from "@/lib/allowed-model-rules";
 import { getCircuitState, isCircuitOpen } from "@/lib/circuit-breaker";
 import { PROVIDER_GROUP } from "@/lib/constants/provider.constants";
 import { logger } from "@/lib/logger";
+import {
+  hasReadyProviderApiKey,
+  hasUsableProviderApiKey,
+  providerReadyAt,
+  readyProviderApiKeyCount,
+  selectProviderApiKey,
+} from "@/lib/provider-key-dispatch";
 import { RateLimitService } from "@/lib/rate-limit";
 import { SessionManager } from "@/lib/session-manager";
+import {
+  filterSmartCooldown,
+  getSmartDispatchConfig,
+  hydrateSmartProviderStates,
+  isSmartProviderCooled,
+  refreshSmartDispatchConfig,
+  selectSmartProvider,
+  smartProviderEffectivePriority,
+  smartProviderEffectiveWeight,
+  smartProviderReadyAt,
+} from "@/lib/smart-dispatch";
 import { parseProviderGroups, resolveProviderGroupsWithDefault } from "@/lib/utils/provider-group";
 import { isProviderActiveNow } from "@/lib/utils/provider-schedule";
 import { resolveSystemTimezone } from "@/lib/utils/timezone";
@@ -17,6 +35,47 @@ import type { ClientFormat } from "./format-mapper";
 import { getVerboseProviderErrorCached } from "./provider-selector-settings-cache";
 import { ProxyResponses } from "./responses";
 import type { ProxySession } from "./session";
+
+async function resolveReadyKeyCounts(
+  providers: Provider[],
+  now: number
+): Promise<Map<number, number>> {
+  return new Map(
+    await Promise.all(
+      providers.map(
+        async (provider) => [provider.id, await readyProviderApiKeyCount(provider, now)] as const
+      )
+    )
+  );
+}
+
+/** 全部候选仍在 Provider 或 Key 冷却时，只放行综合恢复时间最早的一个。 */
+async function selectEarliestRecoveryProvider(
+  providers: Provider[],
+  now: number,
+  userGroup: string | null
+): Promise<Provider | null> {
+  const smartDispatchEnabled = getSmartDispatchConfig().enabled;
+  const candidates = await Promise.all(
+    providers.map(async (provider) => ({
+      provider,
+      readyAt: Math.max(
+        smartDispatchEnabled ? smartProviderReadyAt(provider.id) : now,
+        await providerReadyAt(provider, now)
+      ),
+    }))
+  );
+  candidates.sort((a, b) => {
+    const readyDiff = a.readyAt - b.readyAt;
+    if (readyDiff !== 0) return readyDiff;
+    const priorityDiff =
+      smartProviderEffectivePriority(b.provider, providers, undefined, userGroup) -
+      smartProviderEffectivePriority(a.provider, providers, undefined, userGroup);
+    if (priorityDiff !== 0) return priorityDiff;
+    return a.provider.id - b.provider.id;
+  });
+  return candidates[0]?.provider ?? null;
+}
 
 /**
  * 解析逗号分隔的分组字符串为数组
@@ -455,6 +514,7 @@ export class ProxyProviderResolver {
     excludeIds: number[]
   ): Promise<Provider | null> {
     const { provider } = await ProxyProviderResolver.pickRandomProvider(session, excludeIds);
+    // pickRandomProvider 已经完成 Provider + Key 选择；不要二次推进 Key 轮询计数。
     return provider;
   }
 
@@ -465,6 +525,8 @@ export class ProxyProviderResolver {
     if (!session.shouldReuseProvider() || !session.sessionId) {
       return null;
     }
+
+    await refreshSmartDispatchConfig();
 
     // 从 Redis 读取该 session 绑定的 provider
     const providerId = await SessionManager.getSessionProvider(
@@ -484,6 +546,27 @@ export class ProxyProviderResolver {
       logger.debug("ProviderSelector: Session provider unavailable", {
         sessionId: session.sessionId,
         providerId,
+      });
+      await SessionManager.clearSessionProvider(session.sessionId);
+      return null;
+    }
+
+    await hydrateSmartProviderStates([provider.id]);
+
+    // Session 粘滞不能绕过智能冷却；冷却优先级高于复用。
+    if (isSmartProviderCooled(provider.id)) {
+      logger.debug("ProviderSelector: Session provider is in smart cooldown", {
+        sessionId: session.sessionId,
+        providerId: provider.id,
+      });
+      await SessionManager.clearSessionProvider(session.sessionId);
+      return null;
+    }
+
+    if (!(await hasReadyProviderApiKey(provider))) {
+      logger.debug("ProviderSelector: Session provider has no enabled API keys", {
+        sessionId: session.sessionId,
+        providerId: provider.id,
       });
       await SessionManager.clearSessionProvider(session.sessionId);
       return null;
@@ -711,7 +794,7 @@ export class ProxyProviderResolver {
       providerId: provider.id,
       sessionId: session.sessionId,
     });
-    return provider;
+    return selectProviderApiKey(provider);
   }
 
   private static async pickRandomProvider(
@@ -721,6 +804,8 @@ export class ProxyProviderResolver {
     provider: Provider | null;
     context: NonNullable<ProviderChainItem["decisionContext"]>;
   }> {
+    await refreshSmartDispatchConfig();
+
     // 使用 Session 快照保证故障迁移期间数据一致性
     // 如果没有 session，回退到 findAllProviders（内部已使用缓存）
     const allProviders = session ? await session.getProvidersSnapshot() : await findAllProviders();
@@ -847,6 +932,10 @@ export class ProxyProviderResolver {
         return false;
       }
 
+      if (!hasUsableProviderApiKey(provider)) {
+        return false;
+      }
+
       // 2a-2. 调度时间窗口过滤
       if (!isProviderActiveNow(provider.activeTimeStart, provider.activeTimeEnd, systemTimezone)) {
         return false;
@@ -928,19 +1017,68 @@ export class ProxyProviderResolver {
       return { provider: null, context };
     }
 
+    await hydrateSmartProviderStates(enabledProviders.map((provider) => provider.id));
+
     // Step 3: Candidate providers (group filter done in Step 1)
-    const candidateProviders = enabledProviders;
+    // 冷却状态优先于健康度和权重排序；全部冷却时只放行最早恢复的一个兜底候选。
+    const smartCandidates = filterSmartCooldown(enabledProviders, Date.now(), (a, b) => {
+      const priorityDiff =
+        smartProviderEffectivePriority(b, enabledProviders, undefined, effectiveGroupPick) -
+        smartProviderEffectivePriority(a, enabledProviders, undefined, effectiveGroupPick);
+      if (priorityDiff !== 0) return priorityDiff;
+      return (b.priority ?? 0) - (a.priority ?? 0);
+    });
+    let candidateProviders = smartCandidates;
+    let healthCheckedProviders = smartCandidates;
     context.afterGroupFilter = enabledProviders.length;
 
-    context.beforeHealthCheck = candidateProviders.length;
-
     // Step 4: 过滤超限供应商（健康度过滤）
-    const healthyProviders = await ProxyProviderResolver.filterByLimits(candidateProviders);
+    let healthEligibleProviders = await ProxyProviderResolver.filterByLimits(candidateProviders);
+
+    // 全部供应商都在智能冷却时，最早恢复的候选可能同时处于传统熔断或费用限额状态。
+    // 此时按恢复时间继续探查其余冷却候选，避免单个失效兜底候选导致错误 503。
+    if (
+      healthEligibleProviders.length === 0 &&
+      smartCandidates.length < enabledProviders.length &&
+      enabledProviders.every((provider) => isSmartProviderCooled(provider.id))
+    ) {
+      const remainingProviders = enabledProviders.filter(
+        (provider) => !smartCandidates.some((candidate) => candidate.id === provider.id)
+      );
+      const remainingHealthyProviders =
+        await ProxyProviderResolver.filterByLimits(remainingProviders);
+      healthCheckedProviders = [...smartCandidates, ...remainingProviders];
+      if (remainingHealthyProviders.length > 0) {
+        candidateProviders = filterSmartCooldown(remainingHealthyProviders, Date.now(), (a, b) => {
+          const priorityDiff =
+            smartProviderEffectivePriority(
+              b,
+              remainingHealthyProviders,
+              undefined,
+              effectiveGroupPick
+            ) -
+            smartProviderEffectivePriority(
+              a,
+              remainingHealthyProviders,
+              undefined,
+              effectiveGroupPick
+            );
+          if (priorityDiff !== 0) return priorityDiff;
+          return (b.priority ?? 0) - (a.priority ?? 0);
+        });
+        healthEligibleProviders = remainingHealthyProviders;
+      }
+    }
+
+    const healthyProviders = candidateProviders.filter((provider) =>
+      healthEligibleProviders.some((healthy) => healthy.id === provider.id)
+    );
+    context.beforeHealthCheck = healthCheckedProviders.length;
     context.afterHealthCheck = healthyProviders.length;
 
     // 记录过滤掉的供应商（熔断或限流）
-    const filteredOut = candidateProviders.filter(
-      (p) => !healthyProviders.find((hp) => hp.id === p.id)
+    const filteredOut = healthCheckedProviders.filter(
+      (p) => !healthEligibleProviders.find((hp) => hp.id === p.id)
     );
 
     for (const p of filteredOut) {
@@ -982,36 +1120,86 @@ export class ProxyProviderResolver {
       return { provider: null, context };
     }
 
+    // Key 级冷却必须先于 Provider 优先级选择：只要仍有一个健康 Provider 存在 ready Key，
+    // 普通请求就不能落到全 Key 冷却的 Provider。只有全部健康候选都冷却时才显式兜底。
+    const dispatchNow = Date.now();
+    let readyKeyCounts = await resolveReadyKeyCounts(healthyProviders, dispatchNow);
+    const readyKeyProviders = healthyProviders.filter(
+      (provider) => (readyKeyCounts.get(provider.id) ?? 0) > 0
+    );
+    let keySelectableProviders = readyKeyProviders;
+    if (readyKeyProviders.length === 0) {
+      // Provider 冷却与 Key 冷却必须合并比较恢复时间；否则可能错过更早恢复的供应商。
+      const additionalCooledProviders = enabledProviders.filter(
+        (provider) =>
+          isSmartProviderCooled(provider.id, dispatchNow) &&
+          !healthyProviders.some((healthy) => healthy.id === provider.id)
+      );
+      const additionalHealthyProviders =
+        await ProxyProviderResolver.filterByLimits(additionalCooledProviders);
+      const fallbackPool = [...healthyProviders, ...additionalHealthyProviders].filter(
+        (provider, index, providers) =>
+          providers.findIndex((candidate) => candidate.id === provider.id) === index
+      );
+      readyKeyCounts = await resolveReadyKeyCounts(fallbackPool, dispatchNow);
+      const fallbackProvider = await selectEarliestRecoveryProvider(
+        fallbackPool,
+        dispatchNow,
+        effectiveGroupPick
+      );
+      keySelectableProviders = fallbackProvider ? [fallbackProvider] : [];
+    }
+
     // Step 5: 优先级分层（只选择最高优先级的供应商）
     const topPriorityProviders = ProxyProviderResolver.selectTopPriority(
-      healthyProviders,
+      keySelectableProviders,
       effectiveGroupPick
     );
     const priorities = [
       ...new Set(
-        healthyProviders.map((p) =>
+        keySelectableProviders.map((p) =>
           ProxyProviderResolver.resolveEffectivePriority(p, effectiveGroupPick ?? null)
         )
       ),
     ].sort((a, b) => a - b);
     context.priorityLevels = priorities;
     context.selectedPriority = Math.min(
-      ...healthyProviders.map((p) =>
+      ...keySelectableProviders.map((p) =>
         ProxyProviderResolver.resolveEffectivePriority(p, effectiveGroupPick ?? null)
       )
     );
 
-    // Step 6: 成本排序 + 加权选择 + 计算概率
-    const totalWeight = topPriorityProviders.reduce((sum, p) => sum + p.weight, 0);
+    // Step 6: 按“配置权重 × 当前可用 Key 数”平滑加权选择。
+    const schedulingWeights = new Map(
+      topPriorityProviders.map((provider) => [
+        provider.id,
+        smartProviderEffectiveWeight(provider, readyKeyCounts.get(provider.id) ?? 0),
+      ])
+    );
+    const totalWeight = topPriorityProviders.reduce(
+      (sum, provider) => sum + (schedulingWeights.get(provider.id) ?? 0),
+      0
+    );
     context.candidatesAtPriority = topPriorityProviders.map((p) => ({
       id: p.id,
       name: p.name,
       weight: p.weight,
+      readyKeyCount: readyKeyCounts.get(p.id) ?? 0,
+      effectiveWeight: schedulingWeights.get(p.id) ?? 0,
       costMultiplier: p.costMultiplier,
-      probability: totalWeight > 0 ? p.weight / totalWeight : 0,
+      probability: totalWeight > 0 ? (schedulingWeights.get(p.id) ?? 0) / totalWeight : 0,
     }));
 
-    const selected = ProxyProviderResolver.selectOptimal(topPriorityProviders);
+    const selected = await selectProviderApiKey(
+      ProxyProviderResolver.selectOptimal(
+        topPriorityProviders,
+        effectiveGroupPick,
+        schedulingWeights
+      ),
+      new Set(),
+      dispatchNow,
+      { allowCooldownFallback: readyKeyProviders.length === 0 }
+    );
 
     // 详细的选择日志
     logger.info("ProviderSelector: Selection decision", {
@@ -1031,6 +1219,8 @@ export class ProxyProviderResolver {
         type: selected.providerType,
         priority: selected.priority,
         weight: selected.weight,
+        readyKeyCount: readyKeyCounts.get(selected.id) ?? 0,
+        effectiveWeight: schedulingWeights.get(selected.id) ?? 0,
         cost: selected.costMultiplier,
         circuitState: getCircuitState(selected.id),
       },
@@ -1140,20 +1330,24 @@ export class ProxyProviderResolver {
       return [];
     }
 
-    const group = userGroup ?? null;
-    const minPriority = Math.min(
-      ...providers.map((p) => ProxyProviderResolver.resolveEffectivePriority(p, group))
-    );
-
-    return providers.filter(
-      (p) => ProxyProviderResolver.resolveEffectivePriority(p, group) === minPriority
-    );
+    const scores = providers.map((provider) => ({
+      provider,
+      score: smartProviderEffectivePriority(provider, providers, undefined, userGroup ?? null),
+    }));
+    const bestScore = Math.max(...scores.map((item) => item.score));
+    return scores
+      .filter((item) => Math.abs(item.score - bestScore) < 0.1)
+      .map((item) => item.provider);
   }
 
   /**
    * 成本排序 + 加权选择：在同优先级内，按成本排序后加权随机
    */
-  private static selectOptimal(providers: Provider[]): Provider {
+  private static selectOptimal(
+    providers: Provider[],
+    userGroup: string | null = null,
+    schedulingWeights?: ReadonlyMap<number, number>
+  ): Provider {
     if (providers.length === 0) {
       throw new Error("No providers available for selection");
     }
@@ -1162,39 +1356,7 @@ export class ProxyProviderResolver {
       return providers[0];
     }
 
-    // 按成本倍率排序（倍率低的在前）
-    const sorted = [...providers].sort((a, b) => {
-      const costA = a.costMultiplier;
-      const costB = b.costMultiplier;
-      return costA - costB;
-    });
-
-    // 加权随机选择（复用现有逻辑）
-    return ProxyProviderResolver.weightedRandom(sorted);
-  }
-
-  /**
-   * 加权随机选择
-   */
-  private static weightedRandom(providers: Provider[]): Provider {
-    const totalWeight = providers.reduce((sum, p) => sum + p.weight, 0);
-
-    if (totalWeight === 0) {
-      const randomIndex = Math.floor(Math.random() * providers.length);
-      return providers[randomIndex];
-    }
-
-    const random = Math.random() * totalWeight;
-    let cumulativeWeight = 0;
-
-    for (const provider of providers) {
-      cumulativeWeight += provider.weight;
-      if (random < cumulativeWeight) {
-        return provider;
-      }
-    }
-
-    return providers[providers.length - 1];
+    return selectSmartProvider(providers, userGroup, schedulingWeights);
   }
 
   /**
@@ -1213,6 +1375,7 @@ export class ProxyProviderResolver {
     provider: Provider | null;
     context: NonNullable<ProviderChainItem["decisionContext"]>;
   }> {
+    await refreshSmartDispatchConfig();
     const allProviders = await findAllProviders();
 
     // 分组预过滤
@@ -1232,6 +1395,7 @@ export class ProxyProviderResolver {
       (p) =>
         p.isEnabled &&
         p.providerType === providerType &&
+        hasUsableProviderApiKey(p) &&
         isProviderActiveNow(p.activeTimeStart, p.activeTimeEnd, systemTimezone)
     );
 
@@ -1259,16 +1423,64 @@ export class ProxyProviderResolver {
       };
     }
 
+    await hydrateSmartProviderStates(typeFiltered.map((provider) => provider.id));
+
+    // 冷却状态必须先于健康度检查，全部冷却时保留最早恢复的兜底候选。
+    const smartCandidates = filterSmartCooldown(typeFiltered, Date.now(), (a, b) => {
+      const priorityDiff =
+        smartProviderEffectivePriority(b, typeFiltered, undefined, effectiveGroupPick) -
+        smartProviderEffectivePriority(a, typeFiltered, undefined, effectiveGroupPick);
+      if (priorityDiff !== 0) return priorityDiff;
+      return (b.priority ?? 0) - (a.priority ?? 0);
+    });
+
     // 健康度检查（熔断器 + 费用限制）
-    const healthyProviders = await ProxyProviderResolver.filterByLimits(typeFiltered);
+    let candidateProviders = smartCandidates;
+    let healthEligibleProviders = await ProxyProviderResolver.filterByLimits(candidateProviders);
+    if (
+      healthEligibleProviders.length === 0 &&
+      smartCandidates.length < typeFiltered.length &&
+      typeFiltered.every((provider) => isSmartProviderCooled(provider.id))
+    ) {
+      const remainingProviders = typeFiltered.filter(
+        (provider) => !smartCandidates.some((candidate) => candidate.id === provider.id)
+      );
+      const remainingHealthyProviders =
+        await ProxyProviderResolver.filterByLimits(remainingProviders);
+      if (remainingHealthyProviders.length > 0) {
+        candidateProviders = filterSmartCooldown(remainingHealthyProviders, Date.now(), (a, b) => {
+          const priorityDiff =
+            smartProviderEffectivePriority(
+              b,
+              remainingHealthyProviders,
+              undefined,
+              effectiveGroupPick
+            ) -
+            smartProviderEffectivePriority(
+              a,
+              remainingHealthyProviders,
+              undefined,
+              effectiveGroupPick
+            );
+          if (priorityDiff !== 0) return priorityDiff;
+          return (b.priority ?? 0) - (a.priority ?? 0);
+        });
+        healthEligibleProviders = remainingHealthyProviders;
+      }
+    }
+    const healthyProviders = candidateProviders.filter((provider) =>
+      healthEligibleProviders.some((healthy) => healthy.id === provider.id)
+    );
 
     if (healthyProviders.length === 0) {
       // 被过滤的供应商（健康检查失败）
-      const filtered = typeFiltered.map((p) => ({
-        id: p.id,
-        name: p.name,
-        reason: "rate_limited" as const, // 简化：统一标记为 rate_limited
-      }));
+      const filtered = typeFiltered
+        .filter((p) => !healthEligibleProviders.some((healthy) => healthy.id === p.id))
+        .map((p) => ({
+          id: p.id,
+          name: p.name,
+          reason: "rate_limited" as const, // 简化：统一标记为 rate_limited
+        }));
 
       return {
         provider: null,
@@ -1289,23 +1501,74 @@ export class ProxyProviderResolver {
       };
     }
 
+    const dispatchNow = Date.now();
+    let readyKeyCounts = await resolveReadyKeyCounts(healthyProviders, dispatchNow);
+    const readyKeyProviders = healthyProviders.filter(
+      (provider) => (readyKeyCounts.get(provider.id) ?? 0) > 0
+    );
+    let keySelectableProviders = readyKeyProviders;
+    if (readyKeyProviders.length === 0) {
+      const additionalCooledProviders = typeFiltered.filter(
+        (provider) =>
+          isSmartProviderCooled(provider.id, dispatchNow) &&
+          !healthyProviders.some((healthy) => healthy.id === provider.id)
+      );
+      const additionalHealthyProviders =
+        await ProxyProviderResolver.filterByLimits(additionalCooledProviders);
+      const fallbackPool = [...healthyProviders, ...additionalHealthyProviders].filter(
+        (provider, index, providers) =>
+          providers.findIndex((candidate) => candidate.id === provider.id) === index
+      );
+      readyKeyCounts = await resolveReadyKeyCounts(fallbackPool, dispatchNow);
+      const fallbackProvider = await selectEarliestRecoveryProvider(
+        fallbackPool,
+        dispatchNow,
+        effectiveGroupPick
+      );
+      keySelectableProviders = fallbackProvider ? [fallbackProvider] : [];
+    }
+
     // 优先级分层
     const topPriorityProviders = ProxyProviderResolver.selectTopPriority(
-      healthyProviders,
+      keySelectableProviders,
       effectiveGroupPick
     );
 
-    // 成本排序 + 加权随机选择
-    const selected = ProxyProviderResolver.selectOptimal(topPriorityProviders);
+    const schedulingWeights = new Map(
+      topPriorityProviders.map((provider) => [
+        provider.id,
+        smartProviderEffectiveWeight(provider, readyKeyCounts.get(provider.id) ?? 0),
+      ])
+    );
+
+    // 使用有效 Key 容量执行平滑加权选择。
+    const selected = await selectProviderApiKey(
+      ProxyProviderResolver.selectOptimal(
+        topPriorityProviders,
+        effectiveGroupPick,
+        schedulingWeights
+      ),
+      new Set(),
+      dispatchNow,
+      { allowCooldownFallback: readyKeyProviders.length === 0 }
+    );
 
     // 计算候选者概率
-    const totalWeight = topPriorityProviders.reduce((sum, p) => sum + p.weight, 0);
+    const totalWeight = topPriorityProviders.reduce(
+      (sum, provider) => sum + (schedulingWeights.get(provider.id) ?? 0),
+      0
+    );
     const candidates = topPriorityProviders.map((p) => ({
       id: p.id,
       name: p.name,
       weight: p.weight,
+      readyKeyCount: readyKeyCounts.get(p.id) ?? 0,
+      effectiveWeight: schedulingWeights.get(p.id) ?? 0,
       costMultiplier: p.costMultiplier,
-      probability: totalWeight > 0 ? p.weight / totalWeight : 1 / topPriorityProviders.length,
+      probability:
+        totalWeight > 0
+          ? (schedulingWeights.get(p.id) ?? 0) / totalWeight
+          : 1 / topPriorityProviders.length,
     }));
 
     return {

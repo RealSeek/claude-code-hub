@@ -28,7 +28,19 @@ import {
   getPreferredProviderEndpoints,
 } from "@/lib/provider-endpoints/endpoint-selector";
 import { getGlobalAgentPool, getProxyAgentForProvider } from "@/lib/proxy-agent";
+import {
+  providerApiKeyCount,
+  recordProviderApiKeyFailure,
+  recordProviderApiKeySuccess,
+  selectProviderApiKey,
+} from "@/lib/provider-key-dispatch";
 import { RateLimitService } from "@/lib/rate-limit/service";
+import {
+  acquireProviderRequest,
+  ProviderRequestLimitError,
+  type ProviderRequestLease,
+  wrapProviderResponseBody,
+} from "@/lib/provider-request-limiter";
 import { SessionManager } from "@/lib/session-manager";
 import {
   detectUpstreamErrorFromSseOrJsonText,
@@ -117,6 +129,87 @@ import {
   type ThinkingSignatureRectifierResult,
   type ThinkingSignatureRectifierTrigger,
 } from "./thinking-signature-rectifier";
+import {
+  classifyHTTPResponse,
+  generateCooldownAdvice,
+} from "./error-classifier";
+
+function classifyProviderKeyFailure(error: Error): { cooldownUntil?: number } | null {
+  if (!(error instanceof ProxyError)) return null;
+  const headers = new Headers();
+  for (const [key, value] of Object.entries(error.upstreamError?.headers ?? {})) {
+    headers.set(key, value);
+  }
+  const classification = classifyHTTPResponse(
+    error.statusCode,
+    headers,
+    error.upstreamError?.body ?? null
+  );
+  if (classification.level !== "key") return null;
+  const advice = generateCooldownAdvice(classification, {} as never);
+  if (!advice) return {};
+  const cooldownUntil = Date.parse(advice.cooldownUntil);
+  return Number.isFinite(cooldownUntil) && cooldownUntil > Date.now() ? { cooldownUntil } : {};
+}
+
+function resolveForwarderRetryDelayMs(error: Error | null): number {
+  if (!error) return 100;
+  if (!(error instanceof ProxyError)) return 100;
+  const headers = new Headers();
+  for (const [key, value] of Object.entries(error.upstreamError?.headers ?? {})) {
+    headers.set(key, value);
+  }
+  const classification = classifyHTTPResponse(
+    error.statusCode,
+    headers,
+    error.upstreamError?.body ?? null
+  );
+  const advice = generateCooldownAdvice(classification, {} as never);
+  if (!advice) return 100;
+  const cooldownUntil = Date.parse(advice.cooldownUntil);
+  if (!Number.isFinite(cooldownUntil)) return 100;
+  // Key 级错误会立刻轮换凭据；Provider 级错误在调用方切换供应商。
+  if (classification.level === "key" || classification.level === "channel") return 0;
+  return Math.max(0, Math.min(30_000, cooldownUntil - Date.now()));
+}
+
+function resolveEndpointFailureCooldownUntil(error: Error): number | undefined {
+  if (!(error instanceof ProxyError)) return undefined;
+  const headers = new Headers();
+  for (const [key, value] of Object.entries(error.upstreamError?.headers ?? {})) {
+    headers.set(key, value);
+  }
+  const classification = classifyHTTPResponse(
+    error.statusCode,
+    headers,
+    error.upstreamError?.body ?? null
+  );
+  if (classification.level !== "channel") return undefined;
+  const advice = generateCooldownAdvice(classification, {} as never);
+  if (!advice) return undefined;
+  const cooldownUntil = Date.parse(advice.cooldownUntil);
+  return Number.isFinite(cooldownUntil) && cooldownUntil > Date.now()
+    ? cooldownUntil
+    : undefined;
+}
+
+function buildProviderFailureContext(
+  error: Error,
+  provider?: Provider,
+  providerKeyFailureAlreadyRecorded = false
+) {
+  if (!(error instanceof ProxyError)) {
+    return provider ? { provider } : undefined;
+  }
+  return {
+    statusCode: error.statusCode,
+    headers: error.upstreamError?.headers,
+    body: error.upstreamError?.body ?? null,
+    providerKeyId: provider?.selectedApiKeyId,
+    provider,
+    providerKeyFailureAlreadyRecorded,
+  };
+}
 
 /** Default User-Agent for Codex CLI requests when none is provided */
 export const DEFAULT_CODEX_USER_AGENT =
@@ -1224,8 +1317,15 @@ export class ProxyForwarder {
         currentProvider,
         envDefaultMaxAttempts
       );
+      const configuredKeyCount = providerApiKeyCount(currentProvider);
+      // Key 轮换不应放大网络/5xx 的 Provider 重试预算；只有真正发生 Key 级轮换时，
+      // 才为下一个凭据追加一次尝试。
       if (rawCrossProviderFallbackEnabled) {
         maxAttemptsPerProvider = 1;
+      }
+      const attemptedApiKeyIds = new Set<number>();
+      if (currentProvider.selectedApiKeyId != null) {
+        attemptedApiKeyIds.add(currentProvider.selectedApiKeyId);
       }
       const reactiveRectifierRetryState: ReactiveRectifierRetryState = {
         thinkingSignatureRetried: false,
@@ -1463,6 +1563,7 @@ export class ProxyForwarder {
           if (isSSE) {
             setDeferredStreamingFinalization(session, {
               providerId: currentProvider.id,
+              selectedApiKeyId: currentProvider.selectedApiKeyId,
               providerName: currentProvider.name,
               providerPriority: currentProvider.priority || 0,
               attemptNumber: attemptCount,
@@ -1472,6 +1573,7 @@ export class ProxyForwarder {
               endpointId: activeEndpoint.endpointId,
               endpointUrl: endpointAudit.endpointUrl,
               upstreamStatusCode: response.status,
+              upstreamHeaders: Object.fromEntries(response.headers.entries()),
             });
 
             logger.info("ProxyForwarder: Streaming response received, deferring finalization", {
@@ -1651,11 +1753,26 @@ export class ProxyForwarder {
 
           // ========== 成功分支 ==========
           if (activeEndpoint.endpointId != null) {
-            await recordEndpointSuccess(activeEndpoint.endpointId);
+            if (session.ttfbMs == null) {
+              await recordEndpointSuccess(activeEndpoint.endpointId);
+            } else {
+              await recordEndpointSuccess(
+                activeEndpoint.endpointId,
+                session.ttfbMs,
+                session.startTime
+              );
+            }
           }
 
+          if (currentProvider.selectedApiKeyId != null) {
+            recordProviderApiKeySuccess(currentProvider.selectedApiKeyId, session.startTime);
+          }
           if (shouldAccountCircuitBreaker) {
-            recordSuccess(currentProvider.id);
+            if (session.ttfbMs == null) {
+              recordSuccess(currentProvider.id);
+            } else {
+              recordSuccess(currentProvider.id, session.ttfbMs, session.startTime);
+            }
           }
 
           // ⭐ 成功后绑定 session 到供应商（智能绑定策略）
@@ -1730,6 +1847,38 @@ export class ProxyForwarder {
         } catch (error) {
           lastError = error as Error;
 
+          // 本地 Provider 限流不是上游故障：跳过当前 Provider，不能污染熔断器或
+          // endpoint 健康分数；外层会继续选择其它可用 Provider。
+          if (lastError instanceof ProviderRequestLimitError) {
+            logger.info("ProxyForwarder: Provider request limit reached", {
+              providerId: currentProvider.id,
+              providerName: currentProvider.name,
+              reason: lastError.reason,
+              current: lastError.current,
+              rpmCurrent: lastError.rpmCurrent,
+              retryAfterMs: lastError.retryAfterMs,
+            });
+            session.addProviderToChain(currentProvider, {
+              ...endpointAudit,
+              reason: "provider_request_limit",
+              circuitState: getCircuitState(currentProvider.id),
+              attemptNumber: attemptCount,
+              errorMessage: lastError.message,
+              statusCode: 429,
+              errorDetails: {
+                provider: {
+                  id: currentProvider.id,
+                  name: currentProvider.name,
+                  statusCode: 429,
+                  statusText: lastError.message,
+                },
+                request: buildRequestDetails(session),
+              },
+            });
+            ProxyForwarder.markProviderFailed(session, failedProviderIds, currentProvider.id);
+            break;
+          }
+
           // ⭐ 1. 分类错误（供应商错误 vs 系统错误 vs 客户端中断）
           // 使用异步版本确保错误规则已加载
           let errorCategory = await categorizeErrorAsync(lastError);
@@ -1748,7 +1897,11 @@ export class ProxyForwarder {
 
           if (activeEndpoint.endpointId != null) {
             if (isTimeoutError || errorCategory === ErrorCategory.SYSTEM_ERROR) {
-              await recordEndpointFailure(activeEndpoint.endpointId, lastError);
+              await recordEndpointFailure(
+                activeEndpoint.endpointId,
+                lastError,
+                resolveEndpointFailureCooldownUntil(lastError)
+              );
             }
           }
 
@@ -1949,7 +2102,7 @@ export class ProxyForwarder {
               throw lastError;
             }
 
-            // 第1次失败：等待100ms后重试当前供应商
+            // 第1次失败：按错误类型退避后重试当前供应商
             if (attemptCount < maxAttemptsPerProvider) {
               // Network error: advance to next endpoint for retry
               // This implements "endpoint stickiness" where network errors switch endpoints
@@ -1962,7 +2115,7 @@ export class ProxyForwarder {
                 maxEndpointIndex: endpointCandidates.length - 1,
               });
 
-              await new Promise((resolve) => setTimeout(resolve, 100));
+              await new Promise((resolve) => setTimeout(resolve, resolveForwarderRetryDelayMs(lastError)));
               continue; // Continue retry with next endpoint
             }
 
@@ -1992,7 +2145,11 @@ export class ProxyForwarder {
 
               // 计入熔断器
               if (shouldAccountCircuitBreaker) {
-                await recordFailure(currentProvider.id, lastError);
+                await recordFailure(
+                  currentProvider.id,
+                  lastError,
+                  buildProviderFailureContext(lastError, currentProvider)
+                );
               }
             } else {
               logger.debug(
@@ -2068,9 +2225,9 @@ export class ProxyForwarder {
 
             // 不调用 recordFailure()，不计入熔断器
 
-            // 未耗尽重试次数：等待 100ms 后继续重试当前供应商
+            // 未耗尽重试次数：按 Retry-After/退避策略继续重试当前供应商
             if (willRetry) {
-              await new Promise((resolve) => setTimeout(resolve, 100));
+              await new Promise((resolve) => setTimeout(resolve, resolveForwarderRetryDelayMs(lastError)));
               continue;
             }
 
@@ -2134,16 +2291,22 @@ export class ProxyForwarder {
                 throw lastError;
               }
 
-              // 未耗尽重试次数：等待 100ms 后继续重试当前供应商
+              // 未耗尽重试次数：按 Retry-After/退避策略继续重试当前供应商
               if (willRetry) {
-                await new Promise((resolve) => setTimeout(resolve, 100));
+                await new Promise((resolve) =>
+                  setTimeout(resolve, resolveForwarderRetryDelayMs(lastError))
+                );
                 continue;
               }
 
               // 重试耗尽：计入熔断器并切换供应商
               if (!session.isProbeRequest()) {
                 if (shouldAccountCircuitBreaker) {
-                  await recordFailure(currentProvider.id, lastError);
+                  await recordFailure(
+                    currentProvider.id,
+                    lastError,
+                    buildProviderFailureContext(lastError, currentProvider)
+                  );
                 }
               }
 
@@ -2155,6 +2318,70 @@ export class ProxyForwarder {
             const proxyError = lastError as ProxyError;
             const statusCode = proxyError.statusCode;
             const willRetry = attemptCount < maxAttemptsPerProvider;
+
+            // 多 Key Provider 的认证/配额错误只冷却当前 Key，并在同一 Provider 内切换凭据。
+            // 只有所有 Key 都不可用时，才继续走 Provider 级熔断与跨 Provider 切换。
+            const keyFailure = classifyProviderKeyFailure(lastError);
+            let providerKeyFailureAlreadyRecorded = false;
+            if (keyFailure && currentProvider.selectedApiKeyId != null) {
+              recordProviderApiKeyFailure(
+                currentProvider.selectedApiKeyId,
+                keyFailure.cooldownUntil
+              );
+              providerKeyFailureAlreadyRecorded = true;
+              const nextProvider = await selectProviderApiKey(
+                currentProvider,
+                attemptedApiKeyIds
+              );
+              if (
+                nextProvider.selectedApiKeyId != null &&
+                !attemptedApiKeyIds.has(nextProvider.selectedApiKeyId)
+              ) {
+                attemptedApiKeyIds.add(nextProvider.selectedApiKeyId);
+                currentProvider = nextProvider;
+                session.setProvider(currentProvider);
+                maxAttemptsPerProvider += 1;
+                logger.info("ProxyForwarder: Rotating provider API key", {
+                  providerId: currentProvider.id,
+                  providerName: currentProvider.name,
+                  selectedApiKeyId: nextProvider.selectedApiKeyId,
+                  attemptedKeyCount: attemptedApiKeyIds.size,
+                  configuredKeyCount,
+                });
+                await new Promise((resolve) => setTimeout(resolve, resolveForwarderRetryDelayMs(lastError)));
+                continue;
+              }
+
+              if (!session.isProbeRequest() && shouldAccountCircuitBreaker) {
+                await recordFailure(
+                  currentProvider.id,
+                  lastError,
+                  buildProviderFailureContext(lastError, currentProvider, true)
+                );
+              }
+              ProxyForwarder.markProviderFailed(session, failedProviderIds, currentProvider.id);
+              break;
+            }
+
+            // Retry-After 较长时分类器会把 429 提升为 Provider/Channel 级故障。
+            // 这类错误不能在同一 Provider 内用固定短延迟重复轰炸上游，应立即
+            // 记录一次 Provider 冷却并交给外层选择其它 Provider。
+            const providerClassification = classifyHTTPResponse(
+              statusCode,
+              new Headers(proxyError.upstreamError?.headers ?? {}),
+              proxyError.upstreamError?.body ?? null
+            );
+            if (statusCode === 429 && providerClassification.level === "channel") {
+              if (!session.isProbeRequest() && shouldAccountCircuitBreaker) {
+                await recordFailure(
+                  currentProvider.id,
+                  lastError,
+                  buildProviderFailureContext(lastError, currentProvider)
+                );
+              }
+              ProxyForwarder.markProviderFailed(session, failedProviderIds, currentProvider.id);
+              break;
+            }
 
             if (
               !isMcpRequest &&
@@ -2262,7 +2489,7 @@ export class ProxyForwarder {
               },
             });
 
-            // 未耗尽重试次数：等待 100ms 后继续重试当前供应商
+            // 未耗尽重试次数：按 Retry-After/退避策略继续重试当前供应商
             if (willRetry) {
               if (statusCode === 524) {
                 currentEndpointIndex++;
@@ -2274,7 +2501,7 @@ export class ProxyForwarder {
                 });
               }
 
-              await new Promise((resolve) => setTimeout(resolve, 100));
+              await new Promise((resolve) => setTimeout(resolve, resolveForwarderRetryDelayMs(lastError)));
               continue;
             }
 
@@ -2287,7 +2514,15 @@ export class ProxyForwarder {
               });
             } else {
               if (shouldAccountCircuitBreaker) {
-                await recordFailure(currentProvider.id, lastError);
+                await recordFailure(
+                  currentProvider.id,
+                  lastError,
+                  buildProviderFailureContext(
+                    lastError,
+                    currentProvider,
+                    providerKeyFailureAlreadyRecorded
+                  )
+                );
               }
             }
 
@@ -3053,6 +3288,7 @@ export class ProxyForwarder {
       // OpenAI Responses WebSocket 上游尝试（仅 Codex 供应商 + 开关开启 + 客户端以 WS 接入）
       // 若握手失败或首帧前关闭，降级到下面的 HTTP 路径；不计入熔断器。
       let responsesWsResponse: Response | null = null;
+      let responsesWsLease: ProviderRequestLease | null = null;
       const responsesWsEndpointId = endpointAudit?.endpointId ?? null;
       try {
         const wsEligibility = await evaluateResponsesWsEligibility({
@@ -3070,6 +3306,21 @@ export class ProxyForwarder {
           const requestBodyJson = decodeRequestBodyAsJson(requestBody);
 
           if (requestBodyJson) {
+            const wsAcquire = await acquireProviderRequest({
+              providerId: provider.id,
+              rpmLimit: provider.rpm,
+              concurrencyLimit: provider.cc,
+            });
+            if (!wsAcquire.allowed) {
+              throw new ProviderRequestLimitError(
+                provider.id,
+                wsAcquire.reason,
+                wsAcquire.retryAfterMs,
+                wsAcquire.current,
+                wsAcquire.rpmCurrent
+              );
+            }
+            responsesWsLease = wsAcquire.lease;
             const wsResult = await tryResponsesWebsocketUpstream({
               provider,
               upstreamUrl: proxyUrl,
@@ -3081,7 +3332,8 @@ export class ProxyForwarder {
             });
 
             if ("response" in wsResult) {
-              responsesWsResponse = wsResult.response;
+              responsesWsResponse = wrapProviderResponseBody(wsResult.response, wsAcquire.lease);
+              responsesWsLease = null;
               logger.info("ProxyForwarder: Upstream Responses WebSocket connected", {
                 providerId: provider.id,
                 providerName: provider.name,
@@ -3103,6 +3355,8 @@ export class ProxyForwarder {
               if (wsResult.cacheableAsUnsupported) {
                 markResponsesWsUnsupported(provider.id, responsesWsEndpointId, wsResult.reason);
               }
+              await wsAcquire.lease.release();
+              responsesWsLease = null;
               logger.info(
                 "ProxyForwarder: Upstream Responses WebSocket unavailable, falling back to HTTP",
                 {
@@ -3133,6 +3387,11 @@ export class ProxyForwarder {
           });
         }
       } catch (wsError) {
+        if (responsesWsLease) {
+          await responsesWsLease.release();
+          responsesWsLease = null;
+        }
+        if (wsError instanceof ProviderRequestLimitError) throw wsError;
         logger.warn(
           "ProxyForwarder: Upstream Responses WebSocket attempt threw, falling back to HTTP",
           {
@@ -3150,16 +3409,14 @@ export class ProxyForwarder {
       // 当 gzip 流被提前终止时（如连接关闭），undici Gunzip 会抛出 "TypeError: terminated"
       response = responsesWsResponse
         ? responsesWsResponse
-        : useErrorTolerantFetch
-          ? await ProxyForwarder.fetchWithoutAutoDecode(
-              proxyUrl,
-              init,
-              provider.id,
-              provider.name,
-              session,
-              deferDetailSnapshotPersistence
-            )
-          : await fetch(proxyUrl, init);
+        : await ProxyForwarder.fetchWithProviderRequestLimits({
+            provider,
+            url: proxyUrl,
+            init,
+            useErrorTolerantFetch,
+            session,
+            deferDetailSnapshotPersistence,
+          });
       // ⭐ fetch 成功：收到 HTTP 响应头，保留响应超时继续监控
       // 注意：undici 的 fetch 在收到 HTTP 响应头后就 resolve，但实际数据（SSE 首字节 / 完整 JSON）
       // 还没到达。responseTimeoutId 需要延续到 response-handler 中才能真正控制"首字节"或"总耗时"
@@ -3426,16 +3683,14 @@ export class ProxyForwarder {
 
         try {
           // 使用 HTTP/1.1 重试
-          response = useErrorTolerantFetch
-            ? await ProxyForwarder.fetchWithoutAutoDecode(
-                proxyUrl,
-                http1FallbackInit,
-                provider.id,
-                provider.name,
-                session,
-                deferDetailSnapshotPersistence
-              )
-            : await fetch(proxyUrl, http1FallbackInit);
+          response = await ProxyForwarder.fetchWithProviderRequestLimits({
+            provider,
+            url: proxyUrl,
+            init: http1FallbackInit,
+            useErrorTolerantFetch,
+            session,
+            deferDetailSnapshotPersistence,
+          });
 
           logger.info("ProxyForwarder: HTTP/1.1 fallback succeeded", {
             providerId: provider.id,
@@ -3510,16 +3765,14 @@ export class ProxyForwarder {
             const fallbackInit = { ...init };
             delete fallbackInit.dispatcher;
             try {
-              response = useErrorTolerantFetch
-                ? await ProxyForwarder.fetchWithoutAutoDecode(
-                    proxyUrl,
-                    fallbackInit,
-                    provider.id,
-                    provider.name,
-                    session,
-                    deferDetailSnapshotPersistence
-                  )
-                : await fetch(proxyUrl, fallbackInit);
+              response = await ProxyForwarder.fetchWithProviderRequestLimits({
+                provider,
+                url: proxyUrl,
+                init: fallbackInit,
+                useErrorTolerantFetch,
+                session,
+                deferDetailSnapshotPersistence,
+              });
               logger.info("ProxyForwarder: Direct connection succeeded after proxy failure", {
                 providerId: provider.id,
                 providerName: provider.name,
@@ -3793,6 +4046,7 @@ export class ProxyForwarder {
     let lastErrorCategory: ErrorCategory | null = null;
     const attempts = new Set<StreamingHedgeAttempt>();
     const failedProviderIds: number[] = [];
+    const attemptedApiKeyIdsByProvider = new Map<number, Set<number>>();
 
     let resolveResult: ((result: { response?: Response; error?: Error }) => void) | null = null;
     const resultPromise = new Promise<{ response?: Response; error?: Error }>((resolve) => {
@@ -3901,6 +4155,11 @@ export class ProxyForwarder {
                 });
                 try {
                   controller?.abort(new Error("hedge_loser_drain_cap"));
+                } catch {
+                  /* ignore */
+                }
+                try {
+                  await reader.cancel("hedge_loser_drain_cap");
                 } catch {
                   /* ignore */
                 }
@@ -4234,7 +4493,11 @@ export class ProxyForwarder {
       if (attempt.endpointAudit.endpointId != null) {
         const isTimeoutError = error instanceof ProxyError && error.statusCode === 524;
         if (isTimeoutError || errorCategory === ErrorCategory.SYSTEM_ERROR) {
-          await recordEndpointFailure(attempt.endpointAudit.endpointId, error);
+          await recordEndpointFailure(
+            attempt.endpointAudit.endpointId,
+            error,
+            resolveEndpointFailureCooldownUntil(error)
+          );
         }
       }
 
@@ -4346,6 +4609,65 @@ export class ProxyForwarder {
         });
       }
 
+      const keyFailure =
+        errorCategory === ErrorCategory.PROVIDER_ERROR ? classifyProviderKeyFailure(error) : null;
+      let providerKeyFailureAlreadyRecorded = false;
+      if (
+        keyFailure &&
+        attempt.provider.selectedApiKeyId != null &&
+        providerApiKeyCount(attempt.provider) > 1
+      ) {
+        const failedProvider = attempt.provider;
+        const failedApiKeyId = failedProvider.selectedApiKeyId as number;
+        const attemptedKeyIds = attemptedApiKeyIdsByProvider.get(failedProvider.id) ?? new Set();
+        attemptedKeyIds.add(failedApiKeyId);
+        attemptedApiKeyIdsByProvider.set(failedProvider.id, attemptedKeyIds);
+        recordProviderApiKeyFailure(failedApiKeyId, keyFailure.cooldownUntil);
+        providerKeyFailureAlreadyRecorded = true;
+
+        const nextProvider = await selectProviderApiKey(failedProvider, attemptedKeyIds);
+        if (
+          nextProvider.selectedApiKeyId != null &&
+          !attemptedKeyIds.has(nextProvider.selectedApiKeyId)
+        ) {
+          attemptedKeyIds.add(nextProvider.selectedApiKeyId);
+          session.addProviderToChain(failedProvider, {
+            ...attempt.endpointAudit,
+            reason: "retry_failed",
+            attemptNumber: attempt.sequence,
+            statusCode,
+            errorMessage,
+            circuitState: getCircuitState(failedProvider.id),
+            modelRedirect: getAttemptModelRedirect(attempt),
+          });
+
+          if (attempt.thresholdTimer) {
+            clearTimeout(attempt.thresholdTimer);
+            attempt.thresholdTimer = null;
+          }
+          attempt.provider = nextProvider;
+          attempt.session.setProvider(nextProvider);
+          attempt.requestAttemptCount += 1;
+          attempt.responseController = null;
+          attempt.clearResponseTimeout = null;
+          attempt.response = null;
+          attempt.reader = null;
+          attempt.releaseAgent = null;
+          attempt.agentReleased = false;
+          attempt.firstChunk = null;
+
+          logger.info("ProxyForwarder: Hedge participant rotating provider API key", {
+            providerId: nextProvider.id,
+            providerName: nextProvider.name,
+            selectedApiKeyId: nextProvider.selectedApiKeyId,
+            attemptedKeyCount: attemptedKeyIds.size,
+          });
+          armAttemptThreshold(attempt);
+          runAttempt(attempt);
+          return;
+        }
+      }
+
       attempt.settled = true;
       if (attempt.thresholdTimer) {
         clearTimeout(attempt.thresholdTimer);
@@ -4355,7 +4677,15 @@ export class ProxyForwarder {
       ProxyForwarder.markProviderFailed(session, failedProviderIds, attempt.provider.id);
 
       if (errorCategory === ErrorCategory.PROVIDER_ERROR && statusCode !== 404) {
-        await recordFailure(attempt.provider.id, error);
+        await recordFailure(
+          attempt.provider.id,
+          error,
+          buildProviderFailureContext(
+            error,
+            attempt.provider,
+            providerKeyFailureAlreadyRecorded
+          )
+        );
       }
 
       session.addProviderToChain(
@@ -4497,6 +4827,7 @@ export class ProxyForwarder {
 
       setDeferredStreamingFinalization(session, {
         providerId: attempt.provider.id,
+        selectedApiKeyId: attempt.provider.selectedApiKeyId,
         providerName: attempt.provider.name,
         providerPriority: attempt.provider.priority || 0,
         attemptNumber: attempt.sequence,
@@ -4506,6 +4837,7 @@ export class ProxyForwarder {
         endpointId: attempt.endpointAudit.endpointId,
         endpointUrl: attempt.endpointAudit.endpointUrl,
         upstreamStatusCode: attempt.response.status,
+        upstreamHeaders: Object.fromEntries(attempt.response.headers.entries()),
         isHedgeWinner: isActualHedgeWin,
         billHedgeLosers,
       });
@@ -4531,6 +4863,11 @@ export class ProxyForwarder {
       }
 
       launchedProviderIds.add(provider.id);
+      if (provider.selectedApiKeyId != null) {
+        const attemptedKeyIds = attemptedApiKeyIdsByProvider.get(provider.id) ?? new Set();
+        attemptedKeyIds.add(provider.selectedApiKeyId);
+        attemptedApiKeyIdsByProvider.set(provider.id, attemptedKeyIds);
+      }
 
       if (!useOriginalSession && session.sessionId) {
         const limit = provider.limitConcurrentSessions || 0;
@@ -4926,6 +5263,14 @@ export class ProxyForwarder {
   }
 
   private static buildAllProvidersUnavailableError(finalError?: Error | null): ProxyError {
+    if (finalError instanceof ProviderRequestLimitError) {
+      return new ProxyError(finalError.message, 429, {
+        body: "",
+        headers: {
+          "retry-after": String(Math.max(1, Math.ceil(finalError.retryAfterMs / 1000))),
+        },
+      });
+    }
     const safeClientMessageCandidate =
       finalError instanceof ProxyError &&
       (finalError.upstreamError?.rawBody ||
@@ -5171,6 +5516,55 @@ export class ProxyForwarder {
     const xForwardedFor = xffParts.length > 0 ? xffParts.join(", ") : clientIp;
 
     return { clientIp, xForwardedFor: xForwardedFor ?? null };
+  }
+
+  /**
+   * 统一执行一次上游 HTTP 请求，并绑定 Provider 的 RPM/在途并发限制。
+   * 槽位的生命周期跟随 Response.body，而不是跟随会话；这样 SSE/长响应会一直
+   * 占用并发槽，直到客户端取消或上游 body 正常结束。
+   */
+  private static async fetchWithProviderRequestLimits(options: {
+    provider: Provider;
+    url: string;
+    init: RequestInit & { dispatcher?: Dispatcher };
+    useErrorTolerantFetch: boolean;
+    session: ProxySession;
+    deferDetailSnapshotPersistence: boolean;
+  }): Promise<Response> {
+    const { provider, url, init, useErrorTolerantFetch, session, deferDetailSnapshotPersistence } =
+      options;
+    const acquired = await acquireProviderRequest({
+      providerId: provider.id,
+      rpmLimit: provider.rpm,
+      // cc 是历史数据库字段；现在明确恢复为 Provider 上游 HTTP 并发上限。
+      concurrencyLimit: provider.cc,
+    });
+    if (!acquired.allowed) {
+      throw new ProviderRequestLimitError(
+        provider.id,
+        acquired.reason,
+        acquired.retryAfterMs,
+        acquired.current,
+        acquired.rpmCurrent
+      );
+    }
+
+    try {
+      const response = useErrorTolerantFetch
+        ? await ProxyForwarder.fetchWithoutAutoDecode(
+            url,
+            init,
+            provider.id,
+            provider.name,
+            session,
+            deferDetailSnapshotPersistence
+          )
+        : await fetch(url, init);
+      return wrapProviderResponseBody(response, acquired.lease);
+    } catch (error) {
+      await acquired.lease.release();
+      throw error;
+    }
   }
 
   /**

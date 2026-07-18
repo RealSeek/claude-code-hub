@@ -96,6 +96,7 @@ describe("v1 action migration matrix", () => {
       "keys",
       "key-quota",
       "providers",
+      "provider-upstream-billing",
       "provider-endpoints",
       "provider-groups",
       "model-prices",

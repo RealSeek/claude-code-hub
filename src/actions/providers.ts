@@ -26,6 +26,7 @@ import { normalizeCustomHeadersRecord } from "@/lib/custom-headers";
 import { logger } from "@/lib/logger";
 import { PROVIDER_ALLOWED_MODEL_RULE_INPUT_LIST_SCHEMA } from "@/lib/provider-allowed-model-schema";
 import { PROVIDER_BATCH_PATCH_ERROR_CODES } from "@/lib/provider-batch-patch-error-codes";
+import { clearProviderApiKeyDispatchStates } from "@/lib/provider-key-dispatch";
 import { PROVIDER_MODEL_REDIRECT_RULE_LIST_SCHEMA } from "@/lib/provider-model-redirect-schema";
 import { normalizeProviderModelRedirectRules } from "@/lib/provider-model-redirects";
 import {
@@ -53,6 +54,7 @@ import {
 } from "@/lib/redis/circuit-breaker-config";
 import { RedisKVStore } from "@/lib/redis/redis-kv-store";
 import { SessionManager } from "@/lib/session-manager";
+import { clearSmartProviderState } from "@/lib/smart-dispatch";
 import {
   normalizeProviderGroupTag,
   parseProviderGroups,
@@ -105,7 +107,9 @@ import type {
   ProviderPatchOperation,
   ProviderStatisticsMap,
   ProviderType,
+  ProviderUpstreamBillingType,
 } from "@/types/provider";
+import { syncProviderCostMultiplier } from "./provider-upstream-billing";
 import type { ActionResult } from "./types";
 
 type AutoSortResult = {
@@ -324,12 +328,22 @@ export async function getProviders(): Promise<ProviderDisplay[]> {
         name: provider.name,
         url: provider.url,
         maskedKey: maskKey(provider.key),
+        keyStrategy: provider.keyStrategy,
+        apiKeyCount:
+          provider.apiKeys.length > 0
+            ? provider.apiKeys.filter((apiKey) => apiKey.isEnabled).length
+            : 1,
         isEnabled: provider.isEnabled,
         weight: provider.weight,
         priority: provider.priority,
         groupPriorities: provider.groupPriorities,
         costMultiplier: provider.costMultiplier,
         groupTag: provider.groupTag,
+        upstreamBillingType: provider.upstreamBillingType,
+        hasUpstreamBillingAccessToken: Boolean(provider.upstreamBillingAccessToken),
+        hasUpstreamBillingCookie: Boolean(provider.upstreamBillingCookie),
+        upstreamBillingUserId: provider.upstreamBillingUserId,
+        upstreamBillingRefreshIntervalMinutes: provider.upstreamBillingRefreshIntervalMinutes,
         providerType: provider.providerType,
         providerVendorId: provider.providerVendorId,
         preserveClientIp: provider.preserveClientIp,
@@ -526,12 +540,24 @@ export async function getProviderGroupsWithCount(): Promise<
 export async function addProvider(data: {
   name: string;
   url: string;
-  key: string;
+  key?: string;
+  key_strategy?: "sequential" | "round_robin";
+  api_keys?: Array<{
+    key: string;
+    label?: string | null;
+    is_enabled?: boolean;
+    sort_order?: number;
+  }>;
   is_enabled?: boolean;
   weight?: number;
   priority?: number;
   cost_multiplier?: number;
   group_tag?: string | null;
+  upstream_billing_type?: ProviderUpstreamBillingType;
+  upstream_billing_access_token?: string | null;
+  upstream_billing_cookie?: string | null;
+  upstream_billing_user_id?: string | null;
+  upstream_billing_refresh_interval_minutes?: number;
   provider_type?: ProviderType;
   preserve_client_ip?: boolean;
   disable_session_reuse?: boolean;
@@ -602,6 +628,14 @@ export async function addProvider(data: {
 
     const validated = CreateProviderSchema.parse(data);
     logger.trace("addProvider:validated", { name: validated.name });
+    if (
+      (validated.upstream_billing_type === "new-api" &&
+        !validated.upstream_billing_cookie &&
+        !validated.upstream_billing_access_token) ||
+      (validated.upstream_billing_type === "new-api" && !validated.upstream_billing_user_id)
+    ) {
+      return { ok: false, error: "New-API 需要 Session Cookie（或 Access Token）和用户 ID" };
+    }
 
     // 获取 favicon URL
     let faviconUrl: string | null = null;
@@ -620,8 +654,14 @@ export async function addProvider(data: {
       }
     }
 
+    const primaryKey = validated.key ?? validated.api_keys?.[0]?.key;
+    if (!primaryKey) {
+      return { ok: false, error: "请至少提供一个API密钥" };
+    }
+
     const payload = {
       ...validated,
+      key: primaryKey,
       group_tag: normalizeProviderGroupTag(validated.group_tag),
       limit_5h_usd: validated.limit_5h_usd ?? null,
       limit_5h_reset_mode: validated.limit_5h_reset_mode ?? "rolling",
@@ -701,6 +741,14 @@ export async function addProvider(data: {
     // 广播缓存更新（跨实例即时生效）
     await broadcastProviderCacheInvalidation({ operation: "add", providerId: provider.id });
 
+    // 保存成功后异步探测所有启用 Key；探测失败不能回滚供应商创建。
+    void syncProviderCostMultiplier(provider.id).catch((error) => {
+      logger.warn("addProvider:upstream_billing_sync_failed", {
+        providerId: provider.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+
     emitActionAudit({
       category: "provider",
       action: "provider.create",
@@ -742,12 +790,25 @@ export async function editProvider(
     name?: string;
     url?: string;
     key?: string;
+    key_strategy?: "sequential" | "round_robin";
+    api_keys?: Array<{
+      id?: number;
+      key?: string;
+      label?: string | null;
+      is_enabled?: boolean;
+      sort_order?: number;
+    }>;
     is_enabled?: boolean;
     weight?: number;
     priority?: number;
     cost_multiplier?: number;
     group_tag?: string | null;
     group_priorities?: Record<string, number> | null;
+    upstream_billing_type?: ProviderUpstreamBillingType;
+    upstream_billing_access_token?: string | null;
+    upstream_billing_cookie?: string | null;
+    upstream_billing_user_id?: string | null;
+    upstream_billing_refresh_interval_minutes?: number;
     provider_type?: ProviderType;
     preserve_client_ip?: boolean;
     disable_session_reuse?: boolean;
@@ -849,10 +910,41 @@ export async function editProvider(
     if (!currentProvider) {
       return { ok: false, error: "供应商不存在" };
     }
+    const updatesUpstreamBillingAccount =
+      validated.upstream_billing_type !== undefined ||
+      validated.upstream_billing_access_token !== undefined ||
+      validated.upstream_billing_cookie !== undefined ||
+      validated.upstream_billing_user_id !== undefined;
+    const nextUpstreamBillingType =
+      validated.upstream_billing_type ?? currentProvider.upstreamBillingType;
+    const nextUpstreamBillingAccessToken =
+      validated.upstream_billing_access_token === undefined
+        ? currentProvider.upstreamBillingAccessToken
+        : validated.upstream_billing_access_token;
+    const nextUpstreamBillingCookie =
+      validated.upstream_billing_cookie === undefined
+        ? currentProvider.upstreamBillingCookie
+        : validated.upstream_billing_cookie;
+    const nextUpstreamBillingUserId =
+      validated.upstream_billing_user_id === undefined
+        ? currentProvider.upstreamBillingUserId
+        : validated.upstream_billing_user_id;
+    if (
+      updatesUpstreamBillingAccount &&
+      nextUpstreamBillingType === "new-api" &&
+      ((!nextUpstreamBillingCookie && !nextUpstreamBillingAccessToken) ||
+        !nextUpstreamBillingUserId)
+    ) {
+      return { ok: false, error: "New-API 需要 Session Cookie（或 Access Token）和用户 ID" };
+    }
 
     const preimageFields: Record<string, unknown> = {};
     for (const [field, nextValue] of Object.entries(payload)) {
-      if (field === "key") {
+      if (
+        field === "key" ||
+        field === "upstream_billing_access_token" ||
+        field === "upstream_billing_cookie"
+      ) {
         continue;
       }
 
@@ -873,6 +965,20 @@ export async function editProvider(
 
     if (!provider) {
       return { ok: false, error: "供应商不存在" };
+    }
+
+    if (payload.api_keys !== undefined) {
+      // 只清理真正删除或换过密钥内容的 Key；编辑标签、启用状态、排序不应丢失冷却历史。
+      const updatedProvider = await findProviderById(providerId);
+      const updatedById = new Map(
+        (updatedProvider?.apiKeys ?? []).map((apiKey) => [apiKey.id, apiKey.key])
+      );
+      const changedKeyIds = (currentProvider.apiKeys ?? [])
+        .filter(
+          (apiKey) => !updatedById.has(apiKey.id) || updatedById.get(apiKey.id) !== apiKey.key
+        )
+        .map((apiKey) => apiKey.id);
+      await clearProviderApiKeyDispatchStates(changedKeyIds);
     }
 
     // 同步 provider_groups 表（系统级，失败不影响主流程）
@@ -946,6 +1052,15 @@ export async function editProvider(
     // 广播缓存更新（跨实例即时生效）
     await broadcastProviderCacheInvalidation({ operation: "edit", providerId });
 
+    if (payload.api_keys !== undefined) {
+      void syncProviderCostMultiplier(providerId).catch((error) => {
+        logger.warn("editProvider:upstream_billing_sync_failed", {
+          providerId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    }
+
     const undoToken = createProviderPatchUndoToken();
     const operationId = createProviderPatchOperationId();
 
@@ -1002,7 +1117,14 @@ export async function removeProvider(
     }
 
     const provider = await findProviderById(providerId);
-    await deleteProvider(providerId);
+    const deleted = await deleteProvider(providerId);
+    if (!deleted) {
+      return { ok: false, error: "供应商不存在" };
+    }
+
+    if (provider?.apiKeys?.length) {
+      await clearProviderApiKeyDispatchStates(provider.apiKeys.map((apiKey) => apiKey.id));
+    }
 
     await SessionManager.terminateStickySessionsForProviders([providerId], "removeProvider");
 
@@ -1017,6 +1139,7 @@ export async function removeProvider(
 
     // 清除内存缓存（无论 Redis 是否成功都要执行）
     clearConfigCache(providerId);
+    await clearSmartProviderState(providerId);
     await clearProviderState(providerId);
 
     // 删除 Redis 缓存（非关键路径，失败时记录警告）
@@ -1460,6 +1583,8 @@ const SINGLE_EDIT_PREIMAGE_FIELD_TO_PROVIDER_KEY: Record<string, keyof Provider>
   cost_multiplier: "costMultiplier",
   group_tag: "groupTag",
   group_priorities: "groupPriorities",
+  upstream_billing_type: "upstreamBillingType",
+  upstream_billing_user_id: "upstreamBillingUserId",
   provider_type: "providerType",
   preserve_client_ip: "preserveClientIp",
   disable_session_reuse: "disableSessionReuse",
@@ -1709,6 +1834,12 @@ function mapApplyUpdatesToRepositoryFormat(
   if (applyUpdates.limit_concurrent_sessions !== undefined) {
     result.limitConcurrentSessions = applyUpdates.limit_concurrent_sessions;
   }
+  if (applyUpdates.rpm_limit !== undefined) {
+    result.rpm = applyUpdates.rpm_limit;
+  }
+  if (applyUpdates.max_concurrency !== undefined) {
+    result.cc = applyUpdates.max_concurrency;
+  }
   if (applyUpdates.circuit_breaker_failure_threshold !== undefined) {
     result.circuitBreakerFailureThreshold = applyUpdates.circuit_breaker_failure_threshold;
   }
@@ -1783,6 +1914,8 @@ const PATCH_FIELD_TO_PROVIDER_KEY: Record<ProviderBatchPatchField, keyof Provide
   limit_monthly_usd: "limitMonthlyUsd",
   limit_total_usd: "limitTotalUsd",
   limit_concurrent_sessions: "limitConcurrentSessions",
+  rpm_limit: "rpm",
+  max_concurrency: "cc",
   circuit_breaker_failure_threshold: "circuitBreakerFailureThreshold",
   circuit_breaker_open_duration: "circuitBreakerOpenDuration",
   circuit_breaker_half_open_success_threshold: "circuitBreakerHalfOpenSuccessThreshold",
@@ -2392,6 +2525,8 @@ export interface BatchUpdateProvidersParams {
     limit_daily_usd?: number | null;
     daily_reset_mode?: "fixed" | "rolling";
     daily_reset_time?: string;
+    rpm_limit?: number | null;
+    max_concurrency?: number | null;
     codex_service_tier_preference?: CodexServiceTierPreference | null;
     codex_image_generation_preference?: CodexImageGenerationPreference | null;
     anthropic_thinking_budget_preference?: AnthropicThinkingBudgetPreference | null;
@@ -2491,6 +2626,12 @@ export async function batchUpdateProviders(
     }
     if (updates.daily_reset_time !== undefined) {
       repositoryUpdates.dailyResetTime = updates.daily_reset_time;
+    }
+    if (updates.rpm_limit !== undefined) {
+      repositoryUpdates.rpm = updates.rpm_limit ?? 0;
+    }
+    if (updates.max_concurrency !== undefined) {
+      repositoryUpdates.cc = updates.max_concurrency ?? 0;
     }
     if (updates.codex_image_generation_preference !== undefined) {
       repositoryUpdates.codexImageGenerationPreference = updates.codex_image_generation_preference;
@@ -3216,6 +3357,120 @@ export async function getUnmaskedProviderKey(id: number): Promise<ActionResult<{
     });
     return { ok: false, error: message };
   }
+}
+
+export interface ProviderApiKeyDisplay {
+  id: number | null;
+  label: string | null;
+  maskedKey: string;
+  isEnabled: boolean;
+  sortOrder: number;
+}
+
+export async function getProviderApiKeys(
+  id: number
+): Promise<
+  ActionResult<{ strategy: "sequential" | "round_robin"; keys: ProviderApiKeyDisplay[] }>
+> {
+  const session = await getSession();
+  if (!session || session.user.role !== "admin") {
+    return { ok: false, error: "权限不足：仅管理员可查看供应商密钥列表" };
+  }
+  const provider = await findProviderById(id);
+  if (!provider) return { ok: false, error: "供应商不存在" };
+  const keys =
+    provider.apiKeys.length > 0
+      ? provider.apiKeys
+      : provider.key
+        ? [
+            {
+              id: 0,
+              providerId: provider.id,
+              key: provider.key,
+              label: "legacy",
+              isEnabled: true,
+              sortOrder: 0,
+              createdAt: provider.createdAt,
+              updatedAt: provider.updatedAt,
+            },
+          ]
+        : [];
+  return {
+    ok: true,
+    data: {
+      strategy: provider.keyStrategy,
+      keys: keys.map((apiKey) => ({
+        id: apiKey.id || null,
+        label: apiKey.label,
+        maskedKey: maskKey(apiKey.key),
+        isEnabled: apiKey.isEnabled,
+        sortOrder: apiKey.sortOrder,
+      })),
+    },
+  };
+}
+
+export async function getUnmaskedProviderKeys(id: number): Promise<
+  ActionResult<{
+    strategy: "sequential" | "round_robin";
+    keys: Array<{
+      id: number | null;
+      label: string | null;
+      key: string;
+      isEnabled: boolean;
+      sortOrder: number;
+    }>;
+  }>
+> {
+  const session = await getSession();
+  if (!session || session.user.role !== "admin") {
+    return { ok: false, error: "权限不足：仅管理员可查看完整密钥" };
+  }
+  const provider = await findProviderById(id);
+  if (!provider) return { ok: false, error: "供应商不存在" };
+  const result = await getProviderApiKeys(id);
+  if (!result.ok) return result;
+  const source = provider.apiKeys.length > 0 ? provider.apiKeys : [];
+  const keys =
+    source.length > 0
+      ? source
+      : provider.key
+        ? [
+            {
+              id: 0,
+              providerId: provider.id,
+              key: provider.key,
+              label: "legacy",
+              isEnabled: true,
+              sortOrder: 0,
+              createdAt: provider.createdAt,
+              updatedAt: provider.updatedAt,
+            },
+          ]
+        : [];
+  emitActionAudit({
+    category: "provider",
+    action: "provider.keys_reveal",
+    targetType: "provider",
+    targetId: String(provider.id),
+    targetName: provider.name,
+    after: { id: provider.id, name: provider.name, keyCount: keys.length },
+    success: true,
+    redactExtraKeys: ["key", "keys"],
+  });
+  return {
+    ok: true,
+    data: {
+      strategy: result.data.strategy,
+      keys: keys.map((apiKey) => ({
+        id: apiKey.id || null,
+        label: apiKey.label,
+        key: apiKey.key,
+        isEnabled: apiKey.isEnabled,
+        sortOrder: apiKey.sortOrder,
+      })),
+    },
+  };
 }
 
 type ProviderApiTestArgs = {

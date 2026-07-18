@@ -1,8 +1,8 @@
 import "server-only";
 
-import { and, desc, eq, inArray, isNotNull, isNull, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, ne, or, sql } from "drizzle-orm";
 import { db } from "@/drizzle/db";
-import { providerEndpoints, providers } from "@/drizzle/schema";
+import { providerApiKeys, providerEndpoints, providers } from "@/drizzle/schema";
 import { normalizeAllowedModelRules } from "@/lib/allowed-model-rules";
 import { getCachedProviders } from "@/lib/cache/provider-cache";
 import { PROVIDER_TIMEOUT_DEFAULTS } from "@/lib/constants/provider.constants";
@@ -16,7 +16,9 @@ import type {
   AnthropicAdaptiveThinkingConfig,
   CreateProviderData,
   Provider,
+  ProviderApiKey,
   ProviderModelRedirectRule,
+  ProviderUpstreamBilling,
   UpdateProviderData,
 } from "@/types/provider";
 import { toProvider } from "./_shared/transformers";
@@ -31,6 +33,30 @@ type ProviderTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 const PROVIDER_RESTORE_MAX_AGE_MS = 60_000;
 const ENDPOINT_RESTORE_TIME_TOLERANCE_MS = 1_000;
+
+async function attachProviderApiKeys(providerList: Provider[]): Promise<Provider[]> {
+  if (providerList.length === 0) return providerList;
+  const rows = await db
+    .select()
+    .from(providerApiKeys)
+    .where(
+      inArray(
+        providerApiKeys.providerId,
+        providerList.map((provider) => provider.id)
+      )
+    );
+  rows.sort((a, b) => a.providerId - b.providerId || a.sortOrder - b.sortOrder || a.id - b.id);
+  const grouped = new Map<number, ProviderApiKey[]>();
+  for (const row of rows) {
+    const current = grouped.get(row.providerId) ?? [];
+    current.push(row);
+    grouped.set(row.providerId, current);
+  }
+  return providerList.map((provider) => ({
+    ...provider,
+    apiKeys: grouped.get(provider.id) ?? [],
+  }));
+}
 
 function normalizeProviderRuntimeFields<
   T extends {
@@ -192,10 +218,15 @@ async function restoreProviderInTransaction(
 }
 
 export async function createProvider(providerData: CreateProviderData): Promise<Provider> {
+  const primaryKey = providerData.api_keys?.[0]?.key ?? providerData.key;
+  if (!primaryKey) {
+    throw new Error("至少需要一个 API Key");
+  }
   const dbData = {
     name: providerData.name,
     url: providerData.url,
-    key: providerData.key,
+    key: primaryKey,
+    keyStrategy: providerData.key_strategy ?? "round_robin",
     isEnabled: providerData.is_enabled,
     weight: providerData.weight,
     priority: providerData.priority,
@@ -203,6 +234,12 @@ export async function createProvider(providerData: CreateProviderData): Promise<
     costMultiplier:
       providerData.cost_multiplier != null ? providerData.cost_multiplier.toString() : "1.0",
     groupTag: providerData.group_tag,
+    upstreamBillingType: providerData.upstream_billing_type ?? "auto",
+    upstreamBillingAccessToken: providerData.upstream_billing_access_token ?? null,
+    upstreamBillingCookie: providerData.upstream_billing_cookie ?? null,
+    upstreamBillingUserId: providerData.upstream_billing_user_id ?? null,
+    upstreamBillingRefreshIntervalMinutes:
+      providerData.upstream_billing_refresh_interval_minutes ?? 30,
     providerType: providerData.provider_type,
     preserveClientIp: providerData.preserve_client_ip ?? false,
     disableSessionReuse: providerData.disable_session_reuse ?? false,
@@ -286,12 +323,20 @@ export async function createProvider(providerData: CreateProviderData): Promise<
         name: providers.name,
         url: providers.url,
         key: providers.key,
+        keyStrategy: providers.keyStrategy,
         providerVendorId: providers.providerVendorId,
         isEnabled: providers.isEnabled,
         weight: providers.weight,
         priority: providers.priority,
         costMultiplier: providers.costMultiplier,
         groupTag: providers.groupTag,
+        upstreamBillingType: providers.upstreamBillingType,
+        upstreamBillingAccessToken: providers.upstreamBillingAccessToken,
+        upstreamBillingCookie: providers.upstreamBillingCookie,
+        upstreamBillingUserId: providers.upstreamBillingUserId,
+        upstreamBillingRefreshIntervalMinutes: providers.upstreamBillingRefreshIntervalMinutes,
+        upstreamBillingSnapshot: providers.upstreamBillingSnapshot,
+        upstreamBillingLastAttemptedAt: providers.upstreamBillingLastAttemptedAt,
         providerType: providers.providerType,
         preserveClientIp: providers.preserveClientIp,
         disableSessionReuse: providers.disableSessionReuse,
@@ -347,7 +392,27 @@ export async function createProvider(providerData: CreateProviderData): Promise<
         deletedAt: providers.deletedAt,
       });
 
-    const created = normalizeProviderRuntimeFields(toProvider(provider));
+    const apiKeyInput =
+      providerData.api_keys && providerData.api_keys.length > 0
+        ? providerData.api_keys
+        : [{ key: primaryKey, label: null, is_enabled: true, sort_order: 0 }];
+    const createdApiKeys = await tx
+      .insert(providerApiKeys)
+      .values(
+        apiKeyInput.map((apiKey, index) => ({
+          providerId: provider.id,
+          key: apiKey.key,
+          label: apiKey.label ?? null,
+          isEnabled: apiKey.is_enabled ?? true,
+          sortOrder: apiKey.sort_order ?? index,
+        }))
+      )
+      .returning();
+
+    const created = {
+      ...normalizeProviderRuntimeFields(toProvider(provider)),
+      apiKeys: createdApiKeys,
+    };
 
     if (created.providerVendorId) {
       await ensureProviderEndpointExistsForUrl(
@@ -374,6 +439,7 @@ export async function findProviderList(
       name: providers.name,
       url: providers.url,
       key: providers.key,
+      keyStrategy: providers.keyStrategy,
       providerVendorId: providers.providerVendorId,
       isEnabled: providers.isEnabled,
       weight: providers.weight,
@@ -381,6 +447,13 @@ export async function findProviderList(
       groupPriorities: providers.groupPriorities,
       costMultiplier: providers.costMultiplier,
       groupTag: providers.groupTag,
+      upstreamBillingType: providers.upstreamBillingType,
+      upstreamBillingAccessToken: providers.upstreamBillingAccessToken,
+      upstreamBillingCookie: providers.upstreamBillingCookie,
+      upstreamBillingUserId: providers.upstreamBillingUserId,
+      upstreamBillingRefreshIntervalMinutes: providers.upstreamBillingRefreshIntervalMinutes,
+      upstreamBillingSnapshot: providers.upstreamBillingSnapshot,
+      upstreamBillingLastAttemptedAt: providers.upstreamBillingLastAttemptedAt,
       providerType: providers.providerType,
       preserveClientIp: providers.preserveClientIp,
       disableSessionReuse: providers.disableSessionReuse,
@@ -446,7 +519,9 @@ export async function findProviderList(
     ids: result.map((r) => r.id),
   });
 
-  return result.map((provider) => normalizeProviderRuntimeFields(toProvider(provider)));
+  return attachProviderApiKeys(
+    result.map((provider) => normalizeProviderRuntimeFields(toProvider(provider)))
+  );
 }
 
 /**
@@ -463,6 +538,7 @@ export async function findAllProvidersFresh(): Promise<Provider[]> {
       name: providers.name,
       url: providers.url,
       key: providers.key,
+      keyStrategy: providers.keyStrategy,
       providerVendorId: providers.providerVendorId,
       isEnabled: providers.isEnabled,
       weight: providers.weight,
@@ -470,6 +546,13 @@ export async function findAllProvidersFresh(): Promise<Provider[]> {
       groupPriorities: providers.groupPriorities,
       costMultiplier: providers.costMultiplier,
       groupTag: providers.groupTag,
+      upstreamBillingType: providers.upstreamBillingType,
+      upstreamBillingAccessToken: providers.upstreamBillingAccessToken,
+      upstreamBillingCookie: providers.upstreamBillingCookie,
+      upstreamBillingUserId: providers.upstreamBillingUserId,
+      upstreamBillingRefreshIntervalMinutes: providers.upstreamBillingRefreshIntervalMinutes,
+      upstreamBillingSnapshot: providers.upstreamBillingSnapshot,
+      upstreamBillingLastAttemptedAt: providers.upstreamBillingLastAttemptedAt,
       providerType: providers.providerType,
       preserveClientIp: providers.preserveClientIp,
       disableSessionReuse: providers.disableSessionReuse,
@@ -533,7 +616,7 @@ export async function findAllProvidersFresh(): Promise<Provider[]> {
     ids: result.map((r) => r.id),
   });
 
-  return result.map(toProvider);
+  return attachProviderApiKeys(result.map(toProvider));
 }
 
 /**
@@ -556,6 +639,7 @@ export async function findProviderById(id: number): Promise<Provider | null> {
       name: providers.name,
       url: providers.url,
       key: providers.key,
+      keyStrategy: providers.keyStrategy,
       providerVendorId: providers.providerVendorId,
       isEnabled: providers.isEnabled,
       weight: providers.weight,
@@ -563,6 +647,13 @@ export async function findProviderById(id: number): Promise<Provider | null> {
       groupPriorities: providers.groupPriorities,
       costMultiplier: providers.costMultiplier,
       groupTag: providers.groupTag,
+      upstreamBillingType: providers.upstreamBillingType,
+      upstreamBillingAccessToken: providers.upstreamBillingAccessToken,
+      upstreamBillingCookie: providers.upstreamBillingCookie,
+      upstreamBillingUserId: providers.upstreamBillingUserId,
+      upstreamBillingRefreshIntervalMinutes: providers.upstreamBillingRefreshIntervalMinutes,
+      upstreamBillingSnapshot: providers.upstreamBillingSnapshot,
+      upstreamBillingLastAttemptedAt: providers.upstreamBillingLastAttemptedAt,
       providerType: providers.providerType,
       preserveClientIp: providers.preserveClientIp,
       disableSessionReuse: providers.disableSessionReuse,
@@ -621,7 +712,10 @@ export async function findProviderById(id: number): Promise<Provider | null> {
     .where(and(eq(providers.id, id), isNull(providers.deletedAt)));
 
   if (!provider) return null;
-  return normalizeProviderRuntimeFields(toProvider(provider));
+  const [result] = await attachProviderApiKeys([
+    normalizeProviderRuntimeFields(toProvider(provider)),
+  ]);
+  return result ?? null;
 }
 
 export async function updateProvider(
@@ -636,9 +730,25 @@ export async function updateProvider(
     updatedAt: new Date(),
   };
 
+  const upstreamBillingConfigChanged =
+    providerData.url !== undefined ||
+    providerData.key !== undefined ||
+    providerData.api_keys !== undefined ||
+    providerData.upstream_billing_type !== undefined ||
+    providerData.upstream_billing_access_token !== undefined ||
+    providerData.upstream_billing_cookie !== undefined ||
+    providerData.upstream_billing_user_id !== undefined;
+  if (upstreamBillingConfigChanged) {
+    dbData.upstreamBillingSnapshot = null;
+    dbData.upstreamBillingLastAttemptedAt = null;
+  }
+
   if (providerData.name !== undefined) dbData.name = providerData.name;
   if (providerData.url !== undefined) dbData.url = providerData.url;
   if (providerData.key !== undefined) dbData.key = providerData.key;
+  if (providerData.api_keys?.[0]?.key) dbData.key = providerData.api_keys[0].key;
+  if (providerData.api_keys?.length === 0 && providerData.key === undefined) dbData.key = "";
+  if (providerData.key_strategy !== undefined) dbData.keyStrategy = providerData.key_strategy;
   if (providerData.is_enabled !== undefined) dbData.isEnabled = providerData.is_enabled;
   if (providerData.weight !== undefined) dbData.weight = providerData.weight;
   if (providerData.priority !== undefined) dbData.priority = providerData.priority;
@@ -648,6 +758,17 @@ export async function updateProvider(
     dbData.costMultiplier =
       providerData.cost_multiplier != null ? providerData.cost_multiplier.toString() : "1.0";
   if (providerData.group_tag !== undefined) dbData.groupTag = providerData.group_tag;
+  if (providerData.upstream_billing_type !== undefined)
+    dbData.upstreamBillingType = providerData.upstream_billing_type;
+  if (providerData.upstream_billing_access_token !== undefined)
+    dbData.upstreamBillingAccessToken = providerData.upstream_billing_access_token || null;
+  if (providerData.upstream_billing_cookie !== undefined)
+    dbData.upstreamBillingCookie = providerData.upstream_billing_cookie || null;
+  if (providerData.upstream_billing_user_id !== undefined)
+    dbData.upstreamBillingUserId = providerData.upstream_billing_user_id || null;
+  if (providerData.upstream_billing_refresh_interval_minutes !== undefined)
+    dbData.upstreamBillingRefreshIntervalMinutes =
+      providerData.upstream_billing_refresh_interval_minutes;
   if (providerData.provider_type !== undefined) dbData.providerType = providerData.provider_type;
   if (providerData.preserve_client_ip !== undefined)
     dbData.preserveClientIp = providerData.preserve_client_ip;
@@ -807,6 +928,7 @@ export async function updateProvider(
         name: providers.name,
         url: providers.url,
         key: providers.key,
+        keyStrategy: providers.keyStrategy,
         providerVendorId: providers.providerVendorId,
         isEnabled: providers.isEnabled,
         weight: providers.weight,
@@ -814,6 +936,13 @@ export async function updateProvider(
         groupPriorities: providers.groupPriorities,
         costMultiplier: providers.costMultiplier,
         groupTag: providers.groupTag,
+        upstreamBillingType: providers.upstreamBillingType,
+        upstreamBillingAccessToken: providers.upstreamBillingAccessToken,
+        upstreamBillingCookie: providers.upstreamBillingCookie,
+        upstreamBillingUserId: providers.upstreamBillingUserId,
+        upstreamBillingRefreshIntervalMinutes: providers.upstreamBillingRefreshIntervalMinutes,
+        upstreamBillingSnapshot: providers.upstreamBillingSnapshot,
+        upstreamBillingLastAttemptedAt: providers.upstreamBillingLastAttemptedAt,
         providerType: providers.providerType,
         preserveClientIp: providers.preserveClientIp,
         disableSessionReuse: providers.disableSessionReuse,
@@ -870,6 +999,100 @@ export async function updateProvider(
       });
 
     if (!provider) return null;
+
+    if (providerData.api_keys !== undefined) {
+      const existingKeys = await tx
+        .select({
+          id: providerApiKeys.id,
+          key: providerApiKeys.key,
+          label: providerApiKeys.label,
+          isEnabled: providerApiKeys.isEnabled,
+          sortOrder: providerApiKeys.sortOrder,
+        })
+        .from(providerApiKeys)
+        .where(eq(providerApiKeys.providerId, id));
+      const existingById = new Map(existingKeys.map((apiKey) => [apiKey.id, apiKey]));
+      const retainedIds = new Set<number>();
+      const seenIds = new Set<number>();
+      const inserts: Array<{
+        providerId: number;
+        key: string;
+        label: string | null;
+        isEnabled: boolean;
+        sortOrder: number;
+      }> = [];
+
+      for (const [index, apiKey] of providerData.api_keys.entries()) {
+        const existing = apiKey.id === undefined ? undefined : existingById.get(apiKey.id);
+        if (apiKey.id !== undefined) {
+          if (!existing) {
+            throw new Error(`供应商 ${id} 不包含 API Key ${apiKey.id}`);
+          }
+          if (seenIds.has(apiKey.id)) {
+            throw new Error(`供应商 ${id} 的 API Key ${apiKey.id} 重复提交`);
+          }
+          seenIds.add(apiKey.id);
+          retainedIds.add(apiKey.id);
+        }
+
+        const nextKey =
+          apiKey.key?.trim() || existing?.key || (existingKeys.length === 0 ? provider.key : "");
+        if (!nextKey) {
+          throw new Error("新增 API Key 必须提供 key");
+        }
+
+        if (existing) {
+          await tx
+            .update(providerApiKeys)
+            .set({
+              key: nextKey,
+              label: apiKey.label !== undefined ? apiKey.label : existing.label,
+              isEnabled: apiKey.is_enabled !== undefined ? apiKey.is_enabled : existing.isEnabled,
+              sortOrder: apiKey.sort_order ?? existing.sortOrder,
+              updatedAt: new Date(),
+            })
+            .where(eq(providerApiKeys.id, existing.id));
+        } else {
+          inserts.push({
+            providerId: id,
+            key: nextKey,
+            label: apiKey.label ?? null,
+            isEnabled: apiKey.is_enabled ?? true,
+            sortOrder: apiKey.sort_order ?? index,
+          });
+        }
+      }
+
+      const removedIds = existingKeys
+        .map((apiKey) => apiKey.id)
+        .filter((keyId) => !retainedIds.has(keyId));
+      if (removedIds.length > 0) {
+        await tx.delete(providerApiKeys).where(inArray(providerApiKeys.id, removedIds));
+      }
+      if (inserts.length > 0) {
+        await tx.insert(providerApiKeys).values(inserts);
+      }
+    } else if (providerData.key !== undefined) {
+      const [primaryKey] = await tx
+        .select({ id: providerApiKeys.id })
+        .from(providerApiKeys)
+        .where(eq(providerApiKeys.providerId, id))
+        .orderBy(asc(providerApiKeys.sortOrder), asc(providerApiKeys.id))
+        .limit(1);
+      if (primaryKey) {
+        await tx
+          .update(providerApiKeys)
+          .set({ key: providerData.key, updatedAt: new Date() })
+          .where(eq(providerApiKeys.id, primaryKey.id));
+      } else {
+        await tx.insert(providerApiKeys).values({
+          providerId: id,
+          key: providerData.key,
+          isEnabled: true,
+          sortOrder: 0,
+        });
+      }
+    }
     const transformed = normalizeProviderRuntimeFields(toProvider(provider));
 
     if (shouldSyncEndpoint && transformed.providerVendorId) {
@@ -949,6 +1172,51 @@ export async function updateProvider(
   }
 
   return updateResult.provider;
+}
+
+/**
+ * 原子抢占一次上游计费刷新资格。
+ *
+ * 抢占时间在探测开始前写入，因此即使上游失败，也不会让高频用户请求形成探测风暴。
+ */
+export async function claimProviderUpstreamBillingRefresh(
+  providerId: number,
+  minimumIntervalMs: number,
+  force = false
+): Promise<boolean> {
+  const now = new Date();
+  const dueBefore = new Date(now.getTime() - Math.max(0, minimumIntervalMs));
+  const dueCondition = or(
+    isNull(providers.upstreamBillingLastAttemptedAt),
+    lt(providers.upstreamBillingLastAttemptedAt, dueBefore)
+  );
+  const where = force
+    ? and(eq(providers.id, providerId), isNull(providers.deletedAt))
+    : and(eq(providers.id, providerId), isNull(providers.deletedAt), dueCondition);
+
+  const claimed = await db
+    .update(providers)
+    .set({ upstreamBillingLastAttemptedAt: now })
+    .where(where)
+    .returning({ id: providers.id });
+  return claimed.length > 0;
+}
+
+/** 保存不含凭据的计费快照；倍率只有在上游返回可靠值时才由调用方传入。 */
+export async function updateProviderUpstreamBillingSnapshot(
+  providerId: number,
+  snapshot: ProviderUpstreamBilling,
+  costMultiplier?: number
+): Promise<boolean> {
+  const updated = await db
+    .update(providers)
+    .set({
+      upstreamBillingSnapshot: snapshot,
+      ...(costMultiplier !== undefined ? { costMultiplier: costMultiplier.toString() } : {}),
+    })
+    .where(and(eq(providers.id, providerId), isNull(providers.deletedAt)))
+    .returning({ id: providers.id });
+  return updated.length > 0;
 }
 
 export async function updateProviderPrioritiesBatch(
@@ -1074,6 +1342,8 @@ export interface BatchProviderUpdates {
   weight?: number;
   costMultiplier?: string;
   groupTag?: string | null;
+  upstreamBillingType?: Provider["upstreamBillingType"];
+  upstreamBillingUserId?: string | null;
   modelRedirects?: ProviderModelRedirectRule[] | null;
   allowedModels?: AllowedModelRuleInput[] | null;
   allowedClients?: string[] | null;
@@ -1103,6 +1373,8 @@ export interface BatchProviderUpdates {
   limitDailyUsd?: string | null;
   dailyResetMode?: string;
   dailyResetTime?: string;
+  rpm?: number;
+  cc?: number;
   limitWeeklyUsd?: string | null;
   limitMonthlyUsd?: string | null;
   limitTotalUsd?: string | null;
@@ -1149,6 +1421,12 @@ export async function updateProvidersBatch(
   }
   if (updates.groupTag !== undefined) {
     setClauses.groupTag = updates.groupTag;
+  }
+  if (updates.upstreamBillingType !== undefined) {
+    setClauses.upstreamBillingType = updates.upstreamBillingType;
+  }
+  if (updates.upstreamBillingUserId !== undefined) {
+    setClauses.upstreamBillingUserId = updates.upstreamBillingUserId;
   }
   if (updates.modelRedirects !== undefined) {
     setClauses.modelRedirects = updates.modelRedirects;
@@ -1232,6 +1510,12 @@ export async function updateProvidersBatch(
   }
   if (updates.dailyResetTime !== undefined) {
     setClauses.dailyResetTime = updates.dailyResetTime;
+  }
+  if (updates.rpm !== undefined) {
+    setClauses.rpm = updates.rpm;
+  }
+  if (updates.cc !== undefined) {
+    setClauses.cc = updates.cc;
   }
   if (updates.limitWeeklyUsd !== undefined) {
     setClauses.limitWeeklyUsd = updates.limitWeeklyUsd;

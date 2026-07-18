@@ -21,6 +21,7 @@ import type {
   CodexPriorityBillingSource,
   FakeStreamingWhitelistEntry,
   ResponseFixerConfig,
+  SmartDispatchSettings,
   SystemSettings,
 } from "@/types/system-config";
 import type { ActionResult } from "./types";
@@ -88,6 +89,7 @@ export async function saveSystemSettings(formData: {
   enableClaudeMetadataUserIdInjection?: boolean;
   enableResponseFixer?: boolean;
   responseFixerConfig?: Partial<ResponseFixerConfig>;
+  smartDispatchConfig?: Partial<SmartDispatchSettings>;
   // Quota lease settings
   quotaDbRefreshIntervalSeconds?: number;
   quotaLeasePercent5h?: number;
@@ -143,6 +145,7 @@ export async function saveSystemSettings(formData: {
       enableClaudeMetadataUserIdInjection: validated.enableClaudeMetadataUserIdInjection,
       enableResponseFixer: validated.enableResponseFixer,
       responseFixerConfig: validated.responseFixerConfig,
+      smartDispatchConfig: validated.smartDispatchConfig,
       quotaDbRefreshIntervalSeconds: validated.quotaDbRefreshIntervalSeconds,
       quotaLeasePercent5h: validated.quotaLeasePercent5h,
       quotaLeasePercentDaily: validated.quotaLeasePercentDaily,
@@ -157,6 +160,8 @@ export async function saveSystemSettings(formData: {
 
     // Invalidate the system settings cache so proxy requests get fresh settings
     invalidateSystemSettingsCache();
+    const { invalidateSmartDispatchConfig } = await import("@/lib/smart-dispatch");
+    invalidateSmartDispatchConfig();
     const { invalidateProviderSelectorSystemSettingsCache } = await import(
       "@/app/v1/_lib/proxy/provider-selector-settings-cache"
     );

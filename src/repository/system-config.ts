@@ -8,6 +8,7 @@ import { logger } from "@/lib/logger";
 import { DEFAULT_SITE_TITLE } from "@/lib/site-title";
 import {
   DEFAULT_FAKE_STREAMING_WHITELIST,
+  DEFAULT_SMART_DISPATCH_SETTINGS,
   type SystemSettings,
   type UpdateSystemSettingsInput,
 } from "@/types/system-config";
@@ -183,6 +184,7 @@ function createFallbackSettings(): SystemSettings {
       maxJsonDepth: 200,
       maxFixSize: 1024 * 1024,
     },
+    smartDispatchConfig: { ...DEFAULT_SMART_DISPATCH_SETTINGS },
     quotaDbRefreshIntervalSeconds: 10,
     quotaLeasePercent5h: 0.05,
     quotaLeasePercentDaily: 0.05,
@@ -264,6 +266,12 @@ const RECENT_COLUMN_LADDER: ReadonlyArray<{
   // 本层更新失败（仍有列缺失）时记录的告警
   updateWarn: string;
 }> = [
+  {
+    key: "smartDispatchConfig",
+    column: systemSettings.smartDispatchConfig,
+    selectWarn: "system_settings 表除 smartDispatchConfig 外仍有列缺失，继续回退到上一代字段集。",
+    updateWarn: "system_settings 表除 smartDispatchConfig 外仍有列缺失，继续降级更新。",
+  },
   {
     key: "enableGeminiFunctionIdRectifier",
     column: systemSettings.enableGeminiFunctionIdRectifier,
@@ -730,6 +738,16 @@ export async function updateSystemSettings(
         ...current.responseFixerConfig,
         ...payload.responseFixerConfig,
       };
+    }
+    if (payload.smartDispatchConfig !== undefined) {
+      const smartDispatchConfig = {
+        ...current.smartDispatchConfig,
+        ...payload.smartDispatchConfig,
+      };
+      if (smartDispatchConfig.cooldownBaseMs > smartDispatchConfig.cooldownMaxMs) {
+        throw new Error("智能调度基础冷却时间不能大于最大冷却时间");
+      }
+      updates.smartDispatchConfig = smartDispatchConfig;
     }
 
     // Quota lease settings（如果提供）

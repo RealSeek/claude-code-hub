@@ -110,6 +110,8 @@ const ACTION_TO_FIELD_PATH: Partial<Record<ProviderFormActionWith5hResetMode["ty
   SET_LIMIT_MONTHLY_USD: "rateLimit.limitMonthlyUsd",
   SET_LIMIT_TOTAL_USD: "rateLimit.limitTotalUsd",
   SET_LIMIT_CONCURRENT_SESSIONS: "rateLimit.limitConcurrentSessions",
+  SET_PROVIDER_RPM: "rateLimit.rpm",
+  SET_PROVIDER_CONCURRENCY: "rateLimit.cc",
   SET_FAILURE_THRESHOLD: "circuitBreaker.failureThreshold",
   SET_OPEN_DURATION_MINUTES: "circuitBreaker.openDurationMinutes",
   SET_HALF_OPEN_SUCCESS_THRESHOLD: "circuitBreaker.halfOpenSuccessThreshold",
@@ -147,7 +149,18 @@ export function createInitialState(
     const analysis = analyzeBatchProviderSettings(batchProviders);
 
     return {
-      basic: { name: "", url: "", key: "", websiteUrl: "" },
+      basic: {
+        name: "",
+        url: "",
+        key: "",
+        apiKeysText: "",
+        keyStrategy: "round_robin",
+        websiteUrl: "",
+        upstreamBillingType: "auto",
+        upstreamBillingCookie: "",
+        upstreamBillingUserId: "",
+        upstreamBillingRefreshIntervalMinutes: 30,
+      },
       routing: {
         providerType: "claude", // 批量编辑不支持修改 providerType
         groupTag:
@@ -283,6 +296,8 @@ export function createInitialState(
           analysis.rateLimit.limitConcurrentSessions.status === "uniform"
             ? analysis.rateLimit.limitConcurrentSessions.value
             : null,
+        rpm: analysis.rateLimit.rpm.status === "uniform" ? analysis.rateLimit.rpm.value : null,
+        cc: analysis.rateLimit.cc.status === "uniform" ? analysis.rateLimit.cc.value : null,
       } as ProviderFormRateLimitWith5hResetMode,
       circuitBreaker: {
         failureThreshold:
@@ -345,7 +360,18 @@ export function createInitialState(
   // Batch mode fallback: all fields start at neutral defaults (no provider source)
   if (isBatch) {
     return {
-      basic: { name: "", url: "", key: "", websiteUrl: "" },
+      basic: {
+        name: "",
+        url: "",
+        key: "",
+        apiKeysText: "",
+        keyStrategy: "round_robin",
+        websiteUrl: "",
+        upstreamBillingType: "auto",
+        upstreamBillingCookie: "",
+        upstreamBillingUserId: "",
+        upstreamBillingRefreshIntervalMinutes: 30,
+      },
       routing: {
         providerType: "claude",
         groupTag: [],
@@ -385,6 +411,8 @@ export function createInitialState(
         limitMonthlyUsd: null,
         limitTotalUsd: null,
         limitConcurrentSessions: null,
+        rpm: null,
+        cc: null,
       } as ProviderFormRateLimitWith5hResetMode,
       circuitBreaker: {
         failureThreshold: undefined,
@@ -422,7 +450,14 @@ export function createInitialState(
           : (preset?.name ?? ""),
       url: cloneSafeUrlValue(sourceProvider?.url ?? preset?.url, isClone),
       key: "",
+      apiKeysText: "",
+      keyStrategy: sourceProvider?.keyStrategy ?? "round_robin",
       websiteUrl: cloneSafeUrlValue(sourceProvider?.websiteUrl ?? preset?.websiteUrl, isClone),
+      upstreamBillingType: sourceProvider?.upstreamBillingType ?? "auto",
+      upstreamBillingCookie: "",
+      upstreamBillingUserId: sourceProvider?.upstreamBillingUserId ?? "",
+      upstreamBillingRefreshIntervalMinutes:
+        sourceProvider?.upstreamBillingRefreshIntervalMinutes ?? 30,
     },
     routing: {
       providerType: sourceProvider?.providerType ?? preset?.providerType ?? "claude",
@@ -467,6 +502,8 @@ export function createInitialState(
       limitMonthlyUsd: sourceProvider?.limitMonthlyUsd ?? null,
       limitTotalUsd: sourceProvider?.limitTotalUsd ?? null,
       limitConcurrentSessions: sourceProvider?.limitConcurrentSessions ?? null,
+      rpm: sourceProvider?.rpm ?? null,
+      cc: sourceProvider?.cc ?? null,
     } as ProviderFormRateLimitWith5hResetMode,
     circuitBreaker: {
       failureThreshold: sourceProvider?.circuitBreakerFailureThreshold,
@@ -524,8 +561,23 @@ export function providerFormReducer(
       return { ...state, basic: { ...state.basic, url: action.payload } };
     case "SET_KEY":
       return { ...state, basic: { ...state.basic, key: action.payload } };
+    case "SET_API_KEYS_TEXT":
+      return { ...state, basic: { ...state.basic, apiKeysText: action.payload } };
+    case "SET_KEY_STRATEGY":
+      return { ...state, basic: { ...state.basic, keyStrategy: action.payload } };
     case "SET_WEBSITE_URL":
       return { ...state, basic: { ...state.basic, websiteUrl: action.payload } };
+    case "SET_UPSTREAM_BILLING_TYPE":
+      return { ...state, basic: { ...state.basic, upstreamBillingType: action.payload } };
+    case "SET_UPSTREAM_BILLING_COOKIE":
+      return { ...state, basic: { ...state.basic, upstreamBillingCookie: action.payload } };
+    case "SET_UPSTREAM_BILLING_USER_ID":
+      return { ...state, basic: { ...state.basic, upstreamBillingUserId: action.payload } };
+    case "SET_UPSTREAM_BILLING_REFRESH_INTERVAL_MINUTES":
+      return {
+        ...state,
+        basic: { ...state.basic, upstreamBillingRefreshIntervalMinutes: action.payload },
+      };
 
     // Routing
     case "SET_PROVIDER_TYPE":
@@ -701,6 +753,10 @@ export function providerFormReducer(
         ...state,
         rateLimit: { ...state.rateLimit, limitConcurrentSessions: action.payload },
       };
+    case "SET_PROVIDER_RPM":
+      return { ...state, rateLimit: { ...state.rateLimit, rpm: action.payload } };
+    case "SET_PROVIDER_CONCURRENCY":
+      return { ...state, rateLimit: { ...state.rateLimit, cc: action.payload } };
 
     // Circuit breaker
     case "SET_FAILURE_THRESHOLD":

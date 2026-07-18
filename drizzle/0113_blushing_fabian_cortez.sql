@@ -1,0 +1,1 @@
+ALTER TABLE "providers" ADD COLUMN "upstream_billing_cookie" varchar;

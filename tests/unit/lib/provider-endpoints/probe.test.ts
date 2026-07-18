@@ -154,7 +154,7 @@ describe("provider-endpoints: probe", () => {
     expect(result.errorMessage).toBe("HTTP 503");
   });
 
-  test("probeEndpointUrl: 4xx 仍视为 ok=true", async () => {
+  test("probeEndpointUrl: 4xx 视为失败，避免错误清除端点熔断", async () => {
     process.env.ENDPOINT_PROBE_METHOD = "HEAD";
     vi.resetModules();
 
@@ -183,9 +183,9 @@ describe("provider-endpoints: probe", () => {
     const { probeEndpointUrl } = await import("@/lib/provider-endpoints/probe");
     const result = await probeEndpointUrl("https://example.com", 1234);
 
-    expect(result.ok).toBe(true);
+    expect(result.ok).toBe(false);
     expect(result.statusCode).toBe(404);
-    expect(result.errorType).toBeNull();
+    expect(result.errorType).toBe("http_4xx");
   });
 
   test("probeEndpointUrl: AbortError 归类为 timeout", async () => {
@@ -389,6 +389,8 @@ describe("provider-endpoints: probe", () => {
 
     const recordMock = vi.fn(async () => {});
     const recordFailureMock = vi.fn(async () => {});
+    const smartFailureMock = vi.fn();
+    const smartSuccessMock = vi.fn();
 
     vi.doMock("@/lib/logger", () => ({
       logger: {
@@ -409,6 +411,10 @@ describe("provider-endpoints: probe", () => {
     vi.doMock("@/lib/endpoint-circuit-breaker", () =>
       createCircuitBreakerMock({ recordEndpointFailure: recordFailureMock })
     );
+    vi.doMock("@/lib/smart-dispatch", () => ({
+      recordSmartEndpointFailure: smartFailureMock,
+      recordSmartEndpointSuccess: smartSuccessMock,
+    }));
 
     vi.stubGlobal(
       "fetch",
@@ -421,6 +427,7 @@ describe("provider-endpoints: probe", () => {
     await probeProviderEndpointAndRecord({ endpointId: 123, source: "manual" });
 
     expect(recordFailureMock).toHaveBeenCalledTimes(2);
+    expect(smartFailureMock).toHaveBeenCalledTimes(0);
     expect(recordMock).toHaveBeenCalledTimes(2);
   });
 

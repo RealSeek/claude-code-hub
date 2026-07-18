@@ -122,6 +122,7 @@ import { ProxyForwarder } from "@/app/v1/_lib/proxy/forwarder";
 import { ModelRedirector } from "@/app/v1/_lib/proxy/model-redirector";
 import { ProxySession } from "@/app/v1/_lib/proxy/session";
 import { logger } from "@/lib/logger";
+import { resetProviderKeyDispatchState } from "@/lib/provider-key-dispatch";
 import type { Provider } from "@/types/provider";
 
 type AttemptRuntime = {
@@ -136,6 +137,8 @@ function createProvider(overrides: Partial<Provider> = {}): Provider {
     name: "p1",
     url: "https://provider.example.com",
     key: "k",
+    keyStrategy: "round_robin",
+    apiKeys: [],
     providerVendorId: null,
     isEnabled: true,
     weight: 1,
@@ -331,12 +334,99 @@ function withThinkingBlocks(session: ProxySession): void {
 describe("ProxyForwarder - first-byte hedge scheduling", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetProviderKeyDispatchState();
     mocks.checkAndTrackProviderSession.mockResolvedValue({
       allowed: true,
       count: 1,
       tracked: true,
       referenced: true,
     });
+  });
+
+  test("Hedge 的 Key 级 429 应在同一 Provider 内轮换", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const provider = createProvider({
+        id: 1,
+        name: "multi-key",
+        key: "key-a",
+        keyStrategy: "sequential",
+        selectedApiKeyId: 101,
+        firstByteTimeoutStreamingMs: 100,
+        apiKeys: [
+          {
+            id: 101,
+            providerId: 1,
+            key: "key-a",
+            label: "A",
+            isEnabled: true,
+            sortOrder: 0,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          },
+          {
+            id: 102,
+            providerId: 1,
+            key: "key-b",
+            label: "B",
+            isEnabled: true,
+            sortOrder: 1,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          },
+        ],
+      });
+      const session = createSession();
+      setProviderWithSessionRef(session, provider);
+      mocks.categorizeErrorAsync.mockResolvedValue(ProxyErrorCategory.PROVIDER_ERROR);
+
+      const doForward = vi.spyOn(
+        ProxyForwarder as unknown as {
+          doForward: (...args: unknown[]) => Promise<Response>;
+        },
+        "doForward"
+      );
+      doForward.mockRejectedValueOnce(
+        new UpstreamProxyError("Provider returned 429", 429, {
+          body: '{"error":{"type":"rate_limit_error"}}',
+          headers: { "retry-after": "60" },
+        })
+      );
+      doForward.mockImplementationOnce(async (attemptSession) => {
+        const controller = new AbortController();
+        const runtime = attemptSession as ProxySession & AttemptRuntime;
+        runtime.responseController = controller;
+        runtime.clearResponseTimeout = vi.fn();
+        return createStreamingResponse({
+          label: "key-b",
+          firstChunkDelayMs: 0,
+          controller,
+        });
+      });
+
+      const responsePromise = ProxyForwarder.send(session);
+      await vi.runAllTimersAsync();
+      const response = await responsePromise;
+
+      expect(await response.text()).toContain('"provider":"key-b"');
+      expect(doForward).toHaveBeenCalledTimes(2);
+      expect(doForward.mock.calls.map((call) => (call[1] as Provider).key)).toEqual([
+        "key-a",
+        "key-b",
+      ]);
+      expect(mocks.pickRandomProviderWithExclusion).not.toHaveBeenCalled();
+      expect(mocks.recordFailure).not.toHaveBeenCalled();
+      expect(session.provider?.selectedApiKeyId).toBe(102);
+      expect(session.getProviderChain()).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ reason: "retry_failed", providerKeyId: 101 }),
+          expect.objectContaining({ reason: "request_success", providerKeyId: 102 }),
+        ])
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test("shadow session redirect should not overwrite initial provider redirect and winner should keep its own redirect", () => {

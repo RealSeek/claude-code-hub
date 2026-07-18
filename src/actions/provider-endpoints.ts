@@ -15,6 +15,7 @@ import {
 } from "@/lib/provider-endpoint-error-codes";
 import { probeProviderEndpointAndRecordByEndpoint } from "@/lib/provider-endpoints/probe";
 import { SessionManager } from "@/lib/session-manager";
+import { clearSmartEndpointState } from "@/lib/smart-dispatch";
 import { ERROR_CODES } from "@/lib/utils/error-messages";
 import { extractZodErrorCode, formatZodError } from "@/lib/utils/zod-i18n";
 import {
@@ -618,6 +619,7 @@ export async function removeProviderEndpoint(input: unknown): Promise<ActionResu
 
     try {
       await resetEndpointCircuitState(endpoint.id);
+      await clearSmartEndpointState(endpoint.id);
     } catch (error) {
       logger.warn("removeProviderEndpoint:reset_circuit_failed", {
         endpointId: parsed.data.endpointId,

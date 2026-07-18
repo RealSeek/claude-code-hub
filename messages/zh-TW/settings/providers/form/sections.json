@@ -15,6 +15,36 @@
     "auth": {
       "title": "身份驗證",
       "desc": "提供用於驗證的 API 金鑰"
+    },
+    "upstreamBillingType": {
+      "label": "上游計費系統",
+      "desc": "指定帳戶餘額查詢與倍率同步所使用的上游協議",
+      "options": {
+        "auto": "自動識別",
+        "newApi": "New-API（帳戶餘額與 Token 分組倍率）",
+        "sub2api": "sub2api（餘額與倍率）"
+      }
+    },
+    "upstreamBillingRefreshInterval": {
+      "label": "主動更新間隔（分鐘）",
+      "desc": "定時兜底更新餘額與可用倍率；填 0 關閉定時更新。請求成功後的刷新仍按 10 分鐘去重",
+      "placeholder": "例如 30"
+    },
+    "newApiAccount": {
+      "userId": {
+        "label": "New-API 使用者 ID",
+        "desc": "作為 New-Api-User 請求標頭查詢帳戶餘額",
+        "placeholder": "例如 1"
+      },
+      "cookie": {
+        "label": "New-API Session Cookie",
+        "desc": "填寫登入後的完整 Cookie，例如 session=...；不是供應商 API Key",
+        "configured": "已設定帳戶憑證；留空將保留目前 Cookie",
+        "placeholder": "輸入完整 Session Cookie",
+        "leaveEmpty": "留空保留目前 Cookie",
+        "show": "顯示 Session Cookie",
+        "hide": "隱藏 Session Cookie"
+      }
     }
   },
   "apiTest": {
@@ -132,6 +162,16 @@
     "limitConcurrent": {
       "label": "並發 Session 上限",
       "placeholder": "0 表示無限制"
+    },
+    "rpm": {
+      "label": "供應商每分鐘請求上限",
+      "placeholder": "0 表示無限制",
+      "unit": "RPM"
+    },
+    "providerConcurrency": {
+      "label": "供應商在途請求上限",
+      "placeholder": "0 表示無限制",
+      "unit": "請求"
     },
     "limitDaily": {
       "label": "每日消費上限（USD）",

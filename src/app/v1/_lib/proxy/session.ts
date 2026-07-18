@@ -592,6 +592,7 @@ export class ProxySession {
         | "session_reuse"
         | "initial_selection"
         | "concurrent_limit_failed"
+        | "provider_request_limit" // Provider 上游 RPM/请求并发限制
         | "request_success" // 修复：添加 request_success
         | "retry_success"
         | "retry_failed" // 供应商错误（已计入熔断器）
@@ -622,6 +623,7 @@ export class ProxySession {
       errorMessage?: string; // 错误信息（失败时记录）
       endpointId?: number | null;
       endpointUrl?: string;
+      providerKeyId?: number | null;
       // 修复：添加新字段
       statusCode?: number; // 成功时的状态码
       statusCodeInferred?: boolean; // statusCode 是否为响应体推断
@@ -642,6 +644,7 @@ export class ProxySession {
       providerType: provider.providerType,
       endpointId: metadata?.endpointId,
       endpointUrl: metadata?.endpointUrl,
+      providerKeyId: metadata?.providerKeyId ?? provider.selectedApiKeyId,
       // 元数据
       reason: metadata?.reason,
       selectionMethod: metadata?.selectionMethod,
@@ -673,6 +676,7 @@ export class ProxySession {
       this.providerChain.length === 0 ||
       lastItem.id !== provider.id ||
       lastItem.reason !== metadata?.reason ||
+      lastItem.providerKeyId !== item.providerKeyId ||
       (metadata?.attemptNumber !== undefined && lastItem.attemptNumber !== metadata.attemptNumber);
 
     if (shouldAdd) {

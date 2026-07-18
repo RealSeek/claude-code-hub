@@ -80,6 +80,23 @@ const ResponseFixerConfigSchema = z
   })
   .describe("Response fixer configuration.");
 
+const SmartDispatchConfigSchema = z
+  .object({
+    enabled: z.boolean(),
+    healthScoreEnabled: z.boolean(),
+    windowMinutes: z.number().int().min(1).max(1440),
+    minConfidentSample: z.number().int().min(1).max(100000),
+    successRatePenaltyWeight: z.number().min(0).max(10000),
+    enableTTFBScore: z.boolean(),
+    ttfbPenaltyWeight: z.number().min(0).max(10000),
+    ttfbMaxSlowRatio: z.number().min(0).max(100),
+    ttfbMinConfidentSample: z.number().int().min(1).max(100000),
+    cooldownBaseMs: z.number().int().min(1000).max(86400000),
+    cooldownMaxMs: z.number().int().min(1000).max(604800000),
+    ewmaAlpha: z.number().min(0.01).max(1),
+  })
+  .describe("ccLoad-compatible smart dispatch configuration.");
+
 export const SystemSettingsSchema = z
   .object({
     id: z.number().int().nonnegative().describe("System settings row id."),
@@ -152,6 +169,7 @@ export const SystemSettingsSchema = z
       .describe("Whether Claude metadata.user_id injection is enabled."),
     enableResponseFixer: z.boolean().describe("Whether response fixer is enabled."),
     responseFixerConfig: ResponseFixerConfigSchema,
+    smartDispatchConfig: SmartDispatchConfigSchema,
     quotaDbRefreshIntervalSeconds: z
       .number()
       .int()
@@ -186,6 +204,7 @@ export const SystemSettingsUpdateSchema = SystemSettingsSchema.omit({
       .optional()
       .describe("System timezone, or null to use default."),
     responseFixerConfig: ResponseFixerConfigSchema.partial().optional(),
+    smartDispatchConfig: SmartDispatchConfigSchema.partial().optional(),
   })
   .partial()
   .strict()

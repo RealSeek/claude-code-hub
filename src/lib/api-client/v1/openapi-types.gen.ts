@@ -164,6 +164,30 @@ export interface paths {
         patch: operations["patchProvidersById"];
         trace?: never;
     };
+    "/api/v1/providers/{id}/keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List provider API keys
+         * @description Lists masked API keys and the selection strategy for an admin caller.
+         */
+        get: operations["getProvidersByIdKeys"];
+        /**
+         * Replace provider API keys
+         * @description Replaces the enabled/disabled provider API key pool for an admin caller.
+         */
+        put: operations["putProvidersByIdKeys"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/providers/{id}/key:reveal": {
         parameters: {
             query?: never;
@@ -176,6 +200,26 @@ export interface paths {
          * @description Returns the unmasked provider API key for an admin caller and writes the existing audit log.
          */
         get: operations["getProvidersByIdKeyReveal"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/providers/{id}/keys:reveal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Reveal provider API keys
+         * @description Returns all unmasked provider API keys for an admin caller and audits access.
+         */
+        get: operations["getProvidersByIdKeysReveal"];
         put?: never;
         post?: never;
         delete?: never;
@@ -298,6 +342,46 @@ export interface paths {
          * @description Returns cost and concurrency buckets for multiple visible providers.
          */
         post: operations["postProvidersLimitUsageBatch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/providers/upstream-billing:batch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Get provider upstream billing snapshots
+         * @description Returns persisted New-API or sub2api balance and multiplier snapshots, probing only when a snapshot does not exist yet.
+         */
+        post: operations["postProvidersUpstreamBillingBatch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/providers/{id}/cost-multiplier:sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sync provider cost multiplier
+         * @description Updates the provider cost multiplier from New-API or sub2api billing data.
+         */
+        post: operations["postProvidersByIdCostMultiplierSync"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4327,6 +4411,13 @@ export interface operations {
                             url: string;
                             /** @description Masked provider API key. */
                             maskedKey: string;
+                            /**
+                             * @description Provider API key selection strategy.
+                             * @enum {string}
+                             */
+                            keyStrategy: "sequential" | "round_robin";
+                            /** @description Number of enabled provider API keys. */
+                            apiKeyCount: number;
                             /** @description Whether the provider is enabled. */
                             isEnabled: boolean;
                             /** @description Provider routing weight. */
@@ -4341,6 +4432,19 @@ export interface operations {
                             costMultiplier: number;
                             /** @description Provider group tag. */
                             groupTag: string | null;
+                            /**
+                             * @description Upstream billing system used for balance and multiplier probes.
+                             * @enum {string}
+                             */
+                            upstreamBillingType: "auto" | "new-api" | "sub2api";
+                            /** @description Whether a write-only New-API account access token is configured. */
+                            hasUpstreamBillingAccessToken: boolean;
+                            /** @description Whether a write-only New-API session cookie is configured. */
+                            hasUpstreamBillingCookie: boolean;
+                            /** @description New-API account user id. */
+                            upstreamBillingUserId: string | null;
+                            /** @description Scheduled upstream billing refresh interval in minutes; zero disables it. */
+                            upstreamBillingRefreshIntervalMinutes: number;
                             /**
                              * @description Supported provider type. Hidden legacy provider types are intentionally excluded.
                              * @enum {string}
@@ -4388,6 +4492,10 @@ export interface operations {
                             totalCostResetAt: string | null;
                             /** @description Concurrent session limit. */
                             limitConcurrentSessions: number;
+                            /** @description Provider requests per minute; 0 or null disables the limit. */
+                            rpmLimit: number | null;
+                            /** @description Provider in-flight upstream request limit; 0 or null disables the limit. */
+                            maxConcurrency: number | null;
                             /** @description Max retry attempts. */
                             maxRetryAttempts: number | null;
                             /** @description Circuit breaker failure threshold. */
@@ -4640,8 +4748,20 @@ export interface operations {
                      * @description Provider upstream base URL.
                      */
                     url: string;
-                    /** @description Provider API key. Write-only. */
-                    key: string;
+                    /** @description Legacy provider API key. Write-only; api_keys may be used instead. */
+                    key?: string;
+                    /**
+                     * @description Provider API key selection strategy.
+                     * @enum {string}
+                     */
+                    key_strategy?: "sequential" | "round_robin";
+                    /** @description Provider API key pool. Write-only. */
+                    api_keys?: {
+                        key: string;
+                        label?: string | null;
+                        is_enabled?: boolean;
+                        sort_order?: number;
+                    }[];
                     /** @description Whether the provider is enabled. */
                     is_enabled?: boolean;
                     /** @description Provider routing weight. */
@@ -4652,6 +4772,23 @@ export interface operations {
                     cost_multiplier?: number;
                     /** @description Provider group tag. */
                     group_tag?: string | null;
+                    /**
+                     * @description Upstream billing system used for balance and multiplier probes.
+                     * @default auto
+                     * @enum {string}
+                     */
+                    upstream_billing_type?: "auto" | "new-api" | "sub2api";
+                    /** @description New-API account access token. Write-only. */
+                    upstream_billing_access_token?: string;
+                    /** @description New-API session cookie. Write-only. */
+                    upstream_billing_cookie?: string;
+                    /** @description New-API account user id. */
+                    upstream_billing_user_id?: string;
+                    /**
+                     * @description Scheduled upstream billing refresh interval in minutes; zero disables it.
+                     * @default 30
+                     */
+                    upstream_billing_refresh_interval_minutes?: number | null;
                     /** @description Per-group priority overrides. */
                     group_priorities?: {
                         [key: string]: number;
@@ -4712,6 +4849,10 @@ export interface operations {
                     limit_total_usd?: number | null;
                     /** @description Concurrent session limit. */
                     limit_concurrent_sessions?: number;
+                    /** @description Provider requests per minute. */
+                    rpm_limit?: number | null;
+                    /** @description Provider in-flight upstream request limit. */
+                    max_concurrency?: number | null;
                     /** @description Max retry attempts. */
                     max_retry_attempts?: number | null;
                     /** @description Circuit breaker failure threshold. */
@@ -4792,6 +4933,13 @@ export interface operations {
                         url: string;
                         /** @description Masked provider API key. */
                         maskedKey: string;
+                        /**
+                         * @description Provider API key selection strategy.
+                         * @enum {string}
+                         */
+                        keyStrategy: "sequential" | "round_robin";
+                        /** @description Number of enabled provider API keys. */
+                        apiKeyCount: number;
                         /** @description Whether the provider is enabled. */
                         isEnabled: boolean;
                         /** @description Provider routing weight. */
@@ -4806,6 +4954,19 @@ export interface operations {
                         costMultiplier: number;
                         /** @description Provider group tag. */
                         groupTag: string | null;
+                        /**
+                         * @description Upstream billing system used for balance and multiplier probes.
+                         * @enum {string}
+                         */
+                        upstreamBillingType: "auto" | "new-api" | "sub2api";
+                        /** @description Whether a write-only New-API account access token is configured. */
+                        hasUpstreamBillingAccessToken: boolean;
+                        /** @description Whether a write-only New-API session cookie is configured. */
+                        hasUpstreamBillingCookie: boolean;
+                        /** @description New-API account user id. */
+                        upstreamBillingUserId: string | null;
+                        /** @description Scheduled upstream billing refresh interval in minutes; zero disables it. */
+                        upstreamBillingRefreshIntervalMinutes: number;
                         /**
                          * @description Supported provider type. Hidden legacy provider types are intentionally excluded.
                          * @enum {string}
@@ -4853,6 +5014,10 @@ export interface operations {
                         totalCostResetAt: string | null;
                         /** @description Concurrent session limit. */
                         limitConcurrentSessions: number;
+                        /** @description Provider requests per minute; 0 or null disables the limit. */
+                        rpmLimit: number | null;
+                        /** @description Provider in-flight upstream request limit; 0 or null disables the limit. */
+                        maxConcurrency: number | null;
                         /** @description Max retry attempts. */
                         maxRetryAttempts: number | null;
                         /** @description Circuit breaker failure threshold. */
@@ -5114,6 +5279,13 @@ export interface operations {
                         url: string;
                         /** @description Masked provider API key. */
                         maskedKey: string;
+                        /**
+                         * @description Provider API key selection strategy.
+                         * @enum {string}
+                         */
+                        keyStrategy: "sequential" | "round_robin";
+                        /** @description Number of enabled provider API keys. */
+                        apiKeyCount: number;
                         /** @description Whether the provider is enabled. */
                         isEnabled: boolean;
                         /** @description Provider routing weight. */
@@ -5128,6 +5300,19 @@ export interface operations {
                         costMultiplier: number;
                         /** @description Provider group tag. */
                         groupTag: string | null;
+                        /**
+                         * @description Upstream billing system used for balance and multiplier probes.
+                         * @enum {string}
+                         */
+                        upstreamBillingType: "auto" | "new-api" | "sub2api";
+                        /** @description Whether a write-only New-API account access token is configured. */
+                        hasUpstreamBillingAccessToken: boolean;
+                        /** @description Whether a write-only New-API session cookie is configured. */
+                        hasUpstreamBillingCookie: boolean;
+                        /** @description New-API account user id. */
+                        upstreamBillingUserId: string | null;
+                        /** @description Scheduled upstream billing refresh interval in minutes; zero disables it. */
+                        upstreamBillingRefreshIntervalMinutes: number;
                         /**
                          * @description Supported provider type. Hidden legacy provider types are intentionally excluded.
                          * @enum {string}
@@ -5175,6 +5360,10 @@ export interface operations {
                         totalCostResetAt: string | null;
                         /** @description Concurrent session limit. */
                         limitConcurrentSessions: number;
+                        /** @description Provider requests per minute; 0 or null disables the limit. */
+                        rpmLimit: number | null;
+                        /** @description Provider in-flight upstream request limit; 0 or null disables the limit. */
+                        maxConcurrency: number | null;
                         /** @description Max retry attempts. */
                         maxRetryAttempts: number | null;
                         /** @description Circuit breaker failure threshold. */
@@ -5605,6 +5794,19 @@ export interface operations {
                      * @description Provider upstream base URL.
                      */
                     url?: string;
+                    /**
+                     * @description Provider API key selection strategy.
+                     * @enum {string}
+                     */
+                    key_strategy?: "sequential" | "round_robin";
+                    /** @description Provider API key pool. Write-only. */
+                    api_keys?: {
+                        id?: number;
+                        key?: string;
+                        label?: string | null;
+                        is_enabled?: boolean;
+                        sort_order?: number;
+                    }[];
                     /** @description Whether the provider is enabled. */
                     is_enabled?: boolean;
                     /** @description Provider routing weight. */
@@ -5615,6 +5817,14 @@ export interface operations {
                     cost_multiplier?: number;
                     /** @description Provider group tag. */
                     group_tag?: string | null;
+                    /** @enum {string} */
+                    upstream_billing_type?: "auto" | "new-api" | "sub2api";
+                    /** @description New-API account access token. Write-only; omit to preserve the current value. */
+                    upstream_billing_access_token?: string;
+                    /** @description New-API session cookie. Write-only; omit to preserve the current value. */
+                    upstream_billing_cookie?: string;
+                    upstream_billing_user_id?: string | null;
+                    upstream_billing_refresh_interval_minutes?: number | null;
                     /** @description Per-group priority overrides. */
                     group_priorities?: {
                         [key: string]: number;
@@ -5674,6 +5884,10 @@ export interface operations {
                     limit_total_usd?: number | null;
                     /** @description Concurrent session limit. */
                     limit_concurrent_sessions?: number;
+                    /** @description Provider requests per minute. */
+                    rpm_limit?: number | null;
+                    /** @description Provider in-flight upstream request limit. */
+                    max_concurrency?: number | null;
                     /** @description Max retry attempts. */
                     max_retry_attempts?: number | null;
                     /** @description Circuit breaker failure threshold. */
@@ -5760,6 +5974,13 @@ export interface operations {
                         url: string;
                         /** @description Masked provider API key. */
                         maskedKey: string;
+                        /**
+                         * @description Provider API key selection strategy.
+                         * @enum {string}
+                         */
+                        keyStrategy: "sequential" | "round_robin";
+                        /** @description Number of enabled provider API keys. */
+                        apiKeyCount: number;
                         /** @description Whether the provider is enabled. */
                         isEnabled: boolean;
                         /** @description Provider routing weight. */
@@ -5774,6 +5995,19 @@ export interface operations {
                         costMultiplier: number;
                         /** @description Provider group tag. */
                         groupTag: string | null;
+                        /**
+                         * @description Upstream billing system used for balance and multiplier probes.
+                         * @enum {string}
+                         */
+                        upstreamBillingType: "auto" | "new-api" | "sub2api";
+                        /** @description Whether a write-only New-API account access token is configured. */
+                        hasUpstreamBillingAccessToken: boolean;
+                        /** @description Whether a write-only New-API session cookie is configured. */
+                        hasUpstreamBillingCookie: boolean;
+                        /** @description New-API account user id. */
+                        upstreamBillingUserId: string | null;
+                        /** @description Scheduled upstream billing refresh interval in minutes; zero disables it. */
+                        upstreamBillingRefreshIntervalMinutes: number;
                         /**
                          * @description Supported provider type. Hidden legacy provider types are intentionally excluded.
                          * @enum {string}
@@ -5821,6 +6055,10 @@ export interface operations {
                         totalCostResetAt: string | null;
                         /** @description Concurrent session limit. */
                         limitConcurrentSessions: number;
+                        /** @description Provider requests per minute; 0 or null disables the limit. */
+                        rpmLimit: number | null;
+                        /** @description Provider in-flight upstream request limit; 0 or null disables the limit. */
+                        maxConcurrency: number | null;
                         /** @description Max retry attempts. */
                         maxRetryAttempts: number | null;
                         /** @description Circuit breaker failure threshold. */
@@ -6052,6 +6290,385 @@ export interface operations {
             };
         };
     };
+    getProvidersByIdKeys: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Provider id. */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Provider API key summary. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        strategy: "sequential" | "round_robin";
+                        keys: {
+                            id: number | null;
+                            label: string | null;
+                            maskedKey: string;
+                            isEnabled: boolean;
+                            sortOrder: number;
+                        }[];
+                    };
+                };
+            };
+            /** @description Invalid request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** @description Stable problem type URI or URN. */
+                        type: string;
+                        /** @description Short problem title. */
+                        title: string;
+                        /** @description HTTP status code. */
+                        status: number;
+                        /** @description Human-readable error detail. */
+                        detail: string;
+                        /** @description Request path that produced the problem. */
+                        instance: string;
+                        /** @description Application error code for frontend i18n. */
+                        errorCode: string;
+                        /** @description Optional i18n parameters. */
+                        errorParams?: {
+                            [key: string]: unknown;
+                        };
+                        /** @description Optional request trace identifier. */
+                        traceId?: string;
+                        /** @description Validation failure details. */
+                        invalidParams?: {
+                            /** @description Path to the invalid input field. */
+                            path: (string | number)[];
+                            /** @description Machine-readable validation error code. */
+                            code: string;
+                            /** @description Validation error message. */
+                            message: string;
+                        }[];
+                    };
+                };
+            };
+            /** @description Authentication required. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** @description Stable problem type URI or URN. */
+                        type: string;
+                        /** @description Short problem title. */
+                        title: string;
+                        /** @description HTTP status code. */
+                        status: number;
+                        /** @description Human-readable error detail. */
+                        detail: string;
+                        /** @description Request path that produced the problem. */
+                        instance: string;
+                        /** @description Application error code for frontend i18n. */
+                        errorCode: string;
+                        /** @description Optional i18n parameters. */
+                        errorParams?: {
+                            [key: string]: unknown;
+                        };
+                        /** @description Optional request trace identifier. */
+                        traceId?: string;
+                        /** @description Validation failure details. */
+                        invalidParams?: {
+                            /** @description Path to the invalid input field. */
+                            path: (string | number)[];
+                            /** @description Machine-readable validation error code. */
+                            code: string;
+                            /** @description Validation error message. */
+                            message: string;
+                        }[];
+                    };
+                };
+            };
+            /** @description Admin access required. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** @description Stable problem type URI or URN. */
+                        type: string;
+                        /** @description Short problem title. */
+                        title: string;
+                        /** @description HTTP status code. */
+                        status: number;
+                        /** @description Human-readable error detail. */
+                        detail: string;
+                        /** @description Request path that produced the problem. */
+                        instance: string;
+                        /** @description Application error code for frontend i18n. */
+                        errorCode: string;
+                        /** @description Optional i18n parameters. */
+                        errorParams?: {
+                            [key: string]: unknown;
+                        };
+                        /** @description Optional request trace identifier. */
+                        traceId?: string;
+                        /** @description Validation failure details. */
+                        invalidParams?: {
+                            /** @description Path to the invalid input field. */
+                            path: (string | number)[];
+                            /** @description Machine-readable validation error code. */
+                            code: string;
+                            /** @description Validation error message. */
+                            message: string;
+                        }[];
+                    };
+                };
+            };
+            /** @description Provider not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** @description Stable problem type URI or URN. */
+                        type: string;
+                        /** @description Short problem title. */
+                        title: string;
+                        /** @description HTTP status code. */
+                        status: number;
+                        /** @description Human-readable error detail. */
+                        detail: string;
+                        /** @description Request path that produced the problem. */
+                        instance: string;
+                        /** @description Application error code for frontend i18n. */
+                        errorCode: string;
+                        /** @description Optional i18n parameters. */
+                        errorParams?: {
+                            [key: string]: unknown;
+                        };
+                        /** @description Optional request trace identifier. */
+                        traceId?: string;
+                        /** @description Validation failure details. */
+                        invalidParams?: {
+                            /** @description Path to the invalid input field. */
+                            path: (string | number)[];
+                            /** @description Machine-readable validation error code. */
+                            code: string;
+                            /** @description Validation error message. */
+                            message: string;
+                        }[];
+                    };
+                };
+            };
+        };
+    };
+    putProvidersByIdKeys: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required only when authenticating with the auth-token cookie on mutation requests. */
+                "X-CCH-CSRF"?: string;
+            };
+            path: {
+                /** @description Provider id. */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @enum {string} */
+                    key_strategy?: "sequential" | "round_robin";
+                    api_keys: {
+                        id?: number;
+                        key?: string;
+                        label?: string | null;
+                        is_enabled?: boolean;
+                        sort_order?: number;
+                    }[];
+                };
+            };
+        };
+        responses: {
+            /** @description Updated provider API key summary. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        strategy: "sequential" | "round_robin";
+                        keys: {
+                            id: number | null;
+                            label: string | null;
+                            maskedKey: string;
+                            isEnabled: boolean;
+                            sortOrder: number;
+                        }[];
+                    };
+                };
+            };
+            /** @description Invalid request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** @description Stable problem type URI or URN. */
+                        type: string;
+                        /** @description Short problem title. */
+                        title: string;
+                        /** @description HTTP status code. */
+                        status: number;
+                        /** @description Human-readable error detail. */
+                        detail: string;
+                        /** @description Request path that produced the problem. */
+                        instance: string;
+                        /** @description Application error code for frontend i18n. */
+                        errorCode: string;
+                        /** @description Optional i18n parameters. */
+                        errorParams?: {
+                            [key: string]: unknown;
+                        };
+                        /** @description Optional request trace identifier. */
+                        traceId?: string;
+                        /** @description Validation failure details. */
+                        invalidParams?: {
+                            /** @description Path to the invalid input field. */
+                            path: (string | number)[];
+                            /** @description Machine-readable validation error code. */
+                            code: string;
+                            /** @description Validation error message. */
+                            message: string;
+                        }[];
+                    };
+                };
+            };
+            /** @description Authentication required. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** @description Stable problem type URI or URN. */
+                        type: string;
+                        /** @description Short problem title. */
+                        title: string;
+                        /** @description HTTP status code. */
+                        status: number;
+                        /** @description Human-readable error detail. */
+                        detail: string;
+                        /** @description Request path that produced the problem. */
+                        instance: string;
+                        /** @description Application error code for frontend i18n. */
+                        errorCode: string;
+                        /** @description Optional i18n parameters. */
+                        errorParams?: {
+                            [key: string]: unknown;
+                        };
+                        /** @description Optional request trace identifier. */
+                        traceId?: string;
+                        /** @description Validation failure details. */
+                        invalidParams?: {
+                            /** @description Path to the invalid input field. */
+                            path: (string | number)[];
+                            /** @description Machine-readable validation error code. */
+                            code: string;
+                            /** @description Validation error message. */
+                            message: string;
+                        }[];
+                    };
+                };
+            };
+            /** @description Admin access required. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** @description Stable problem type URI or URN. */
+                        type: string;
+                        /** @description Short problem title. */
+                        title: string;
+                        /** @description HTTP status code. */
+                        status: number;
+                        /** @description Human-readable error detail. */
+                        detail: string;
+                        /** @description Request path that produced the problem. */
+                        instance: string;
+                        /** @description Application error code for frontend i18n. */
+                        errorCode: string;
+                        /** @description Optional i18n parameters. */
+                        errorParams?: {
+                            [key: string]: unknown;
+                        };
+                        /** @description Optional request trace identifier. */
+                        traceId?: string;
+                        /** @description Validation failure details. */
+                        invalidParams?: {
+                            /** @description Path to the invalid input field. */
+                            path: (string | number)[];
+                            /** @description Machine-readable validation error code. */
+                            code: string;
+                            /** @description Validation error message. */
+                            message: string;
+                        }[];
+                    };
+                };
+            };
+            /** @description Provider not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** @description Stable problem type URI or URN. */
+                        type: string;
+                        /** @description Short problem title. */
+                        title: string;
+                        /** @description HTTP status code. */
+                        status: number;
+                        /** @description Human-readable error detail. */
+                        detail: string;
+                        /** @description Request path that produced the problem. */
+                        instance: string;
+                        /** @description Application error code for frontend i18n. */
+                        errorCode: string;
+                        /** @description Optional i18n parameters. */
+                        errorParams?: {
+                            [key: string]: unknown;
+                        };
+                        /** @description Optional request trace identifier. */
+                        traceId?: string;
+                        /** @description Validation failure details. */
+                        invalidParams?: {
+                            /** @description Path to the invalid input field. */
+                            path: (string | number)[];
+                            /** @description Machine-readable validation error code. */
+                            code: string;
+                            /** @description Validation error message. */
+                            message: string;
+                        }[];
+                    };
+                };
+            };
+        };
+    };
     getProvidersByIdKeyReveal: {
         parameters: {
             query?: never;
@@ -6073,6 +6690,187 @@ export interface operations {
                     "application/json": {
                         /** @description Unmasked provider API key. Returned only to admin callers. */
                         key: string;
+                    };
+                };
+            };
+            /** @description Invalid request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** @description Stable problem type URI or URN. */
+                        type: string;
+                        /** @description Short problem title. */
+                        title: string;
+                        /** @description HTTP status code. */
+                        status: number;
+                        /** @description Human-readable error detail. */
+                        detail: string;
+                        /** @description Request path that produced the problem. */
+                        instance: string;
+                        /** @description Application error code for frontend i18n. */
+                        errorCode: string;
+                        /** @description Optional i18n parameters. */
+                        errorParams?: {
+                            [key: string]: unknown;
+                        };
+                        /** @description Optional request trace identifier. */
+                        traceId?: string;
+                        /** @description Validation failure details. */
+                        invalidParams?: {
+                            /** @description Path to the invalid input field. */
+                            path: (string | number)[];
+                            /** @description Machine-readable validation error code. */
+                            code: string;
+                            /** @description Validation error message. */
+                            message: string;
+                        }[];
+                    };
+                };
+            };
+            /** @description Authentication required. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** @description Stable problem type URI or URN. */
+                        type: string;
+                        /** @description Short problem title. */
+                        title: string;
+                        /** @description HTTP status code. */
+                        status: number;
+                        /** @description Human-readable error detail. */
+                        detail: string;
+                        /** @description Request path that produced the problem. */
+                        instance: string;
+                        /** @description Application error code for frontend i18n. */
+                        errorCode: string;
+                        /** @description Optional i18n parameters. */
+                        errorParams?: {
+                            [key: string]: unknown;
+                        };
+                        /** @description Optional request trace identifier. */
+                        traceId?: string;
+                        /** @description Validation failure details. */
+                        invalidParams?: {
+                            /** @description Path to the invalid input field. */
+                            path: (string | number)[];
+                            /** @description Machine-readable validation error code. */
+                            code: string;
+                            /** @description Validation error message. */
+                            message: string;
+                        }[];
+                    };
+                };
+            };
+            /** @description Admin access required. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** @description Stable problem type URI or URN. */
+                        type: string;
+                        /** @description Short problem title. */
+                        title: string;
+                        /** @description HTTP status code. */
+                        status: number;
+                        /** @description Human-readable error detail. */
+                        detail: string;
+                        /** @description Request path that produced the problem. */
+                        instance: string;
+                        /** @description Application error code for frontend i18n. */
+                        errorCode: string;
+                        /** @description Optional i18n parameters. */
+                        errorParams?: {
+                            [key: string]: unknown;
+                        };
+                        /** @description Optional request trace identifier. */
+                        traceId?: string;
+                        /** @description Validation failure details. */
+                        invalidParams?: {
+                            /** @description Path to the invalid input field. */
+                            path: (string | number)[];
+                            /** @description Machine-readable validation error code. */
+                            code: string;
+                            /** @description Validation error message. */
+                            message: string;
+                        }[];
+                    };
+                };
+            };
+            /** @description Provider not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** @description Stable problem type URI or URN. */
+                        type: string;
+                        /** @description Short problem title. */
+                        title: string;
+                        /** @description HTTP status code. */
+                        status: number;
+                        /** @description Human-readable error detail. */
+                        detail: string;
+                        /** @description Request path that produced the problem. */
+                        instance: string;
+                        /** @description Application error code for frontend i18n. */
+                        errorCode: string;
+                        /** @description Optional i18n parameters. */
+                        errorParams?: {
+                            [key: string]: unknown;
+                        };
+                        /** @description Optional request trace identifier. */
+                        traceId?: string;
+                        /** @description Validation failure details. */
+                        invalidParams?: {
+                            /** @description Path to the invalid input field. */
+                            path: (string | number)[];
+                            /** @description Machine-readable validation error code. */
+                            code: string;
+                            /** @description Validation error message. */
+                            message: string;
+                        }[];
+                    };
+                };
+            };
+        };
+    };
+    getProvidersByIdKeysReveal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Provider id. */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Unmasked provider API keys. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        strategy: "sequential" | "round_robin";
+                        keys: {
+                            id: number | null;
+                            label: string | null;
+                            key: string;
+                            isEnabled: boolean;
+                            sortOrder: number;
+                        }[];
                     };
                 };
             };
@@ -7287,6 +8085,430 @@ export interface operations {
             };
         };
     };
+    postProvidersUpstreamBillingBatch: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required only when authenticating with the auth-token cookie on mutation requests. */
+                "X-CCH-CSRF"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description Provider ids. */
+                    providerIds: number[];
+                };
+            };
+        };
+        responses: {
+            /** @description Latest upstream billing snapshots. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: {
+                            providerId: number;
+                            /** @enum {string|null} */
+                            source: "new-api" | "sub2api" | null;
+                            /** @enum {string} */
+                            status: "ok" | "partial" | "unsupported" | "error";
+                            balanceUsd: number | null;
+                            balanceRaw: number | null;
+                            /** @enum {string|null} */
+                            balanceScope?: "key" | "account" | null;
+                            quotaPerUnit: number | null;
+                            effectiveMultiplier: number | null;
+                            observedAt: string;
+                            errorCode: string | null;
+                            /** @enum {string} */
+                            balanceAggregation?: "single_key" | "sum_of_keys" | "unavailable";
+                            successfulKeyCount?: number;
+                            failedKeyCount?: number;
+                            keys?: {
+                                keyId: number | null;
+                                keyLabel: string | null;
+                                /** @enum {string|null} */
+                                source: "new-api" | "sub2api" | null;
+                                /** @enum {string} */
+                                status: "ok" | "partial" | "unsupported" | "error";
+                                balanceUsd: number | null;
+                                balanceRaw: number | null;
+                                /** @enum {string|null} */
+                                balanceScope?: "key" | "account" | null;
+                                quotaPerUnit: number | null;
+                                effectiveMultiplier: number | null;
+                                observedAt: string;
+                                errorCode: string | null;
+                            }[];
+                        }[];
+                    };
+                };
+            };
+            /** @description Invalid request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** @description Stable problem type URI or URN. */
+                        type: string;
+                        /** @description Short problem title. */
+                        title: string;
+                        /** @description HTTP status code. */
+                        status: number;
+                        /** @description Human-readable error detail. */
+                        detail: string;
+                        /** @description Request path that produced the problem. */
+                        instance: string;
+                        /** @description Application error code for frontend i18n. */
+                        errorCode: string;
+                        /** @description Optional i18n parameters. */
+                        errorParams?: {
+                            [key: string]: unknown;
+                        };
+                        /** @description Optional request trace identifier. */
+                        traceId?: string;
+                        /** @description Validation failure details. */
+                        invalidParams?: {
+                            /** @description Path to the invalid input field. */
+                            path: (string | number)[];
+                            /** @description Machine-readable validation error code. */
+                            code: string;
+                            /** @description Validation error message. */
+                            message: string;
+                        }[];
+                    };
+                };
+            };
+            /** @description Authentication required. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** @description Stable problem type URI or URN. */
+                        type: string;
+                        /** @description Short problem title. */
+                        title: string;
+                        /** @description HTTP status code. */
+                        status: number;
+                        /** @description Human-readable error detail. */
+                        detail: string;
+                        /** @description Request path that produced the problem. */
+                        instance: string;
+                        /** @description Application error code for frontend i18n. */
+                        errorCode: string;
+                        /** @description Optional i18n parameters. */
+                        errorParams?: {
+                            [key: string]: unknown;
+                        };
+                        /** @description Optional request trace identifier. */
+                        traceId?: string;
+                        /** @description Validation failure details. */
+                        invalidParams?: {
+                            /** @description Path to the invalid input field. */
+                            path: (string | number)[];
+                            /** @description Machine-readable validation error code. */
+                            code: string;
+                            /** @description Validation error message. */
+                            message: string;
+                        }[];
+                    };
+                };
+            };
+            /** @description Admin access required. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** @description Stable problem type URI or URN. */
+                        type: string;
+                        /** @description Short problem title. */
+                        title: string;
+                        /** @description HTTP status code. */
+                        status: number;
+                        /** @description Human-readable error detail. */
+                        detail: string;
+                        /** @description Request path that produced the problem. */
+                        instance: string;
+                        /** @description Application error code for frontend i18n. */
+                        errorCode: string;
+                        /** @description Optional i18n parameters. */
+                        errorParams?: {
+                            [key: string]: unknown;
+                        };
+                        /** @description Optional request trace identifier. */
+                        traceId?: string;
+                        /** @description Validation failure details. */
+                        invalidParams?: {
+                            /** @description Path to the invalid input field. */
+                            path: (string | number)[];
+                            /** @description Machine-readable validation error code. */
+                            code: string;
+                            /** @description Validation error message. */
+                            message: string;
+                        }[];
+                    };
+                };
+            };
+            /** @description Provider not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** @description Stable problem type URI or URN. */
+                        type: string;
+                        /** @description Short problem title. */
+                        title: string;
+                        /** @description HTTP status code. */
+                        status: number;
+                        /** @description Human-readable error detail. */
+                        detail: string;
+                        /** @description Request path that produced the problem. */
+                        instance: string;
+                        /** @description Application error code for frontend i18n. */
+                        errorCode: string;
+                        /** @description Optional i18n parameters. */
+                        errorParams?: {
+                            [key: string]: unknown;
+                        };
+                        /** @description Optional request trace identifier. */
+                        traceId?: string;
+                        /** @description Validation failure details. */
+                        invalidParams?: {
+                            /** @description Path to the invalid input field. */
+                            path: (string | number)[];
+                            /** @description Machine-readable validation error code. */
+                            code: string;
+                            /** @description Validation error message. */
+                            message: string;
+                        }[];
+                    };
+                };
+            };
+        };
+    };
+    postProvidersByIdCostMultiplierSync: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required only when authenticating with the auth-token cookie on mutation requests. */
+                "X-CCH-CSRF"?: string;
+            };
+            path: {
+                /** @description Provider id. */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Synchronized provider multiplier. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        providerId: number;
+                        /** @enum {string|null} */
+                        source: "new-api" | "sub2api" | null;
+                        /** @enum {string} */
+                        status: "ok" | "partial" | "unsupported" | "error";
+                        balanceUsd: number | null;
+                        balanceRaw: number | null;
+                        /** @enum {string|null} */
+                        balanceScope?: "key" | "account" | null;
+                        quotaPerUnit: number | null;
+                        effectiveMultiplier: number | null;
+                        observedAt: string;
+                        errorCode: string | null;
+                        /** @enum {string} */
+                        balanceAggregation?: "single_key" | "sum_of_keys" | "unavailable";
+                        successfulKeyCount?: number;
+                        failedKeyCount?: number;
+                        keys?: {
+                            keyId: number | null;
+                            keyLabel: string | null;
+                            /** @enum {string|null} */
+                            source: "new-api" | "sub2api" | null;
+                            /** @enum {string} */
+                            status: "ok" | "partial" | "unsupported" | "error";
+                            balanceUsd: number | null;
+                            balanceRaw: number | null;
+                            /** @enum {string|null} */
+                            balanceScope?: "key" | "account" | null;
+                            quotaPerUnit: number | null;
+                            effectiveMultiplier: number | null;
+                            observedAt: string;
+                            errorCode: string | null;
+                        }[];
+                        previousMultiplier: number;
+                        synced: boolean;
+                    };
+                };
+            };
+            /** @description Invalid request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** @description Stable problem type URI or URN. */
+                        type: string;
+                        /** @description Short problem title. */
+                        title: string;
+                        /** @description HTTP status code. */
+                        status: number;
+                        /** @description Human-readable error detail. */
+                        detail: string;
+                        /** @description Request path that produced the problem. */
+                        instance: string;
+                        /** @description Application error code for frontend i18n. */
+                        errorCode: string;
+                        /** @description Optional i18n parameters. */
+                        errorParams?: {
+                            [key: string]: unknown;
+                        };
+                        /** @description Optional request trace identifier. */
+                        traceId?: string;
+                        /** @description Validation failure details. */
+                        invalidParams?: {
+                            /** @description Path to the invalid input field. */
+                            path: (string | number)[];
+                            /** @description Machine-readable validation error code. */
+                            code: string;
+                            /** @description Validation error message. */
+                            message: string;
+                        }[];
+                    };
+                };
+            };
+            /** @description Authentication required. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** @description Stable problem type URI or URN. */
+                        type: string;
+                        /** @description Short problem title. */
+                        title: string;
+                        /** @description HTTP status code. */
+                        status: number;
+                        /** @description Human-readable error detail. */
+                        detail: string;
+                        /** @description Request path that produced the problem. */
+                        instance: string;
+                        /** @description Application error code for frontend i18n. */
+                        errorCode: string;
+                        /** @description Optional i18n parameters. */
+                        errorParams?: {
+                            [key: string]: unknown;
+                        };
+                        /** @description Optional request trace identifier. */
+                        traceId?: string;
+                        /** @description Validation failure details. */
+                        invalidParams?: {
+                            /** @description Path to the invalid input field. */
+                            path: (string | number)[];
+                            /** @description Machine-readable validation error code. */
+                            code: string;
+                            /** @description Validation error message. */
+                            message: string;
+                        }[];
+                    };
+                };
+            };
+            /** @description Admin access required. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** @description Stable problem type URI or URN. */
+                        type: string;
+                        /** @description Short problem title. */
+                        title: string;
+                        /** @description HTTP status code. */
+                        status: number;
+                        /** @description Human-readable error detail. */
+                        detail: string;
+                        /** @description Request path that produced the problem. */
+                        instance: string;
+                        /** @description Application error code for frontend i18n. */
+                        errorCode: string;
+                        /** @description Optional i18n parameters. */
+                        errorParams?: {
+                            [key: string]: unknown;
+                        };
+                        /** @description Optional request trace identifier. */
+                        traceId?: string;
+                        /** @description Validation failure details. */
+                        invalidParams?: {
+                            /** @description Path to the invalid input field. */
+                            path: (string | number)[];
+                            /** @description Machine-readable validation error code. */
+                            code: string;
+                            /** @description Validation error message. */
+                            message: string;
+                        }[];
+                    };
+                };
+            };
+            /** @description Provider not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** @description Stable problem type URI or URN. */
+                        type: string;
+                        /** @description Short problem title. */
+                        title: string;
+                        /** @description HTTP status code. */
+                        status: number;
+                        /** @description Human-readable error detail. */
+                        detail: string;
+                        /** @description Request path that produced the problem. */
+                        instance: string;
+                        /** @description Application error code for frontend i18n. */
+                        errorCode: string;
+                        /** @description Optional i18n parameters. */
+                        errorParams?: {
+                            [key: string]: unknown;
+                        };
+                        /** @description Optional request trace identifier. */
+                        traceId?: string;
+                        /** @description Validation failure details. */
+                        invalidParams?: {
+                            /** @description Path to the invalid input field. */
+                            path: (string | number)[];
+                            /** @description Machine-readable validation error code. */
+                            code: string;
+                            /** @description Validation error message. */
+                            message: string;
+                        }[];
+                    };
+                };
+            };
+        };
+    };
     getProvidersGroups: {
         parameters: {
             query?: never;
@@ -7691,6 +8913,10 @@ export interface operations {
                         daily_reset_mode?: "fixed" | "rolling";
                         /** @description Daily reset time. */
                         daily_reset_time?: string;
+                        /** @description Provider requests per minute. */
+                        rpm_limit?: number | null;
+                        /** @description Provider in-flight upstream request limit. */
+                        max_concurrency?: number | null;
                         /**
                          * @description Codex image generation tool preference.
                          * @enum {string|null}
@@ -11949,6 +13175,21 @@ export interface operations {
                             /** @description Maximum response size eligible for repair. */
                             maxFixSize: number;
                         };
+                        /** @description ccLoad-compatible smart dispatch configuration. */
+                        smartDispatchConfig: {
+                            enabled: boolean;
+                            healthScoreEnabled: boolean;
+                            windowMinutes: number;
+                            minConfidentSample: number;
+                            successRatePenaltyWeight: number;
+                            enableTTFBScore: boolean;
+                            ttfbPenaltyWeight: number;
+                            ttfbMaxSlowRatio: number;
+                            ttfbMinConfidentSample: number;
+                            cooldownBaseMs: number;
+                            cooldownMaxMs: number;
+                            ewmaAlpha: number;
+                        };
                         /** @description Quota DB refresh interval in seconds. */
                         quotaDbRefreshIntervalSeconds?: number;
                         /** @description Five-hour quota lease percent. */
@@ -12210,6 +13451,20 @@ export interface operations {
                         /** @description Maximum response size eligible for repair. */
                         maxFixSize?: number;
                     };
+                    smartDispatchConfig?: {
+                        enabled?: boolean;
+                        healthScoreEnabled?: boolean;
+                        windowMinutes?: number;
+                        minConfidentSample?: number;
+                        successRatePenaltyWeight?: number;
+                        enableTTFBScore?: boolean;
+                        ttfbPenaltyWeight?: number;
+                        ttfbMaxSlowRatio?: number;
+                        ttfbMinConfidentSample?: number;
+                        cooldownBaseMs?: number;
+                        cooldownMaxMs?: number;
+                        ewmaAlpha?: number;
+                    };
                     /** @description Quota DB refresh interval in seconds. */
                     quotaDbRefreshIntervalSeconds?: number;
                     /** @description Five-hour quota lease percent. */
@@ -12345,6 +13600,21 @@ export interface operations {
                             maxJsonDepth: number;
                             /** @description Maximum response size eligible for repair. */
                             maxFixSize: number;
+                        };
+                        /** @description ccLoad-compatible smart dispatch configuration. */
+                        smartDispatchConfig: {
+                            enabled: boolean;
+                            healthScoreEnabled: boolean;
+                            windowMinutes: number;
+                            minConfidentSample: number;
+                            successRatePenaltyWeight: number;
+                            enableTTFBScore: boolean;
+                            ttfbPenaltyWeight: number;
+                            ttfbMaxSlowRatio: number;
+                            ttfbMinConfidentSample: number;
+                            cooldownBaseMs: number;
+                            cooldownMaxMs: number;
+                            ewmaAlpha: number;
                         };
                         /** @description Quota DB refresh interval in seconds. */
                         quotaDbRefreshIntervalSeconds?: number;

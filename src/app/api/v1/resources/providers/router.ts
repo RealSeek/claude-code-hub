@@ -4,12 +4,16 @@ import { PUBLIC_PROVIDER_TYPE_VALUES } from "@/lib/api/v1/_shared/constants";
 import { fromZodError } from "@/lib/api/v1/_shared/error-envelope";
 import { ProblemJsonSchema } from "@/lib/api/v1/schemas/_common";
 import {
+  ProviderApiKeysResponseSchema,
+  ProviderApiKeysRevealResponseSchema,
+  ProviderApiKeysUpdateSchema,
   ProviderApiTestSchema,
   ProviderArrayResponseSchema,
   ProviderBatchPatchApplySchema,
   ProviderBatchPatchPreviewSchema,
   ProviderBatchUpdateSchema,
   ProviderConfirmBodySchema,
+  ProviderCostMultiplierSyncResponseSchema,
   ProviderCreateSchema,
   ProviderFetchUpstreamModelsSchema,
   ProviderGenericResponseSchema,
@@ -27,6 +31,7 @@ import {
   ProviderUndoBodySchema,
   ProviderUnifiedTestSchema,
   ProviderUpdateSchema,
+  ProviderUpstreamBillingArrayResponseSchema,
 } from "@/lib/api/v1/schemas/providers";
 import {
   applyBatchPatch,
@@ -37,11 +42,13 @@ import {
   deleteProvider,
   fetchProviderUpstreamModels,
   getProvider,
+  getProviderApiKeys,
   getProviderLimit,
   getProviderLimitBatch,
   getProviderModelSuggestions,
   getProvidersHealth,
   getProviderTestPresets,
+  getProviderUpstreamBillingBatch,
   listProviderGroups,
   listProviders,
   previewBatchPatch,
@@ -49,7 +56,9 @@ import {
   resetProviderCircuit,
   resetProviderCircuitsBatch,
   resetProviderUsage,
+  revealProviderApiKeys,
   revealProviderKey,
+  syncProviderCostMultiplier,
   testProviderAnthropic,
   testProviderById,
   testProviderGemini,
@@ -60,6 +69,7 @@ import {
   undoDeleteProvider,
   undoProviderBatchPatch,
   updateProvider,
+  updateProviderApiKeys,
 } from "./handlers";
 
 const DashboardCompatProviderTypeRouteSchema = z
@@ -198,6 +208,52 @@ const getProviderRoute = createRoute({
 providersRouter.openAPIRegistry.registerPath(getProviderRoute);
 providersRouter.get("/providers/:id{[0-9]+}", requireAuth("admin"), getProvider);
 
+const providerApiKeysRoute = createRoute({
+  method: "get",
+  path: "/providers/{id}/keys",
+  tags: ["Providers"],
+  summary: "List provider API keys",
+  description: "Lists masked API keys and the selection strategy for an admin caller.",
+  "x-required-access": "admin",
+  security,
+  request: { params: ProviderIdParamSchema },
+  responses: {
+    200: {
+      description: "Provider API key summary.",
+      content: { "application/json": { schema: ProviderApiKeysResponseSchema } },
+    },
+    ...problemResponses,
+  },
+});
+
+providersRouter.openapi(providerApiKeysRoute, getProviderApiKeys as never);
+
+const providerApiKeysUpdateRoute = createRoute({
+  method: "put",
+  path: "/providers/{id}/keys",
+  tags: ["Providers"],
+  summary: "Replace provider API keys",
+  description: "Replaces the enabled/disabled provider API key pool for an admin caller.",
+  "x-required-access": "admin",
+  security,
+  request: {
+    params: ProviderIdParamSchema,
+    body: {
+      required: true,
+      content: { "application/json": { schema: ProviderApiKeysUpdateSchema } },
+    },
+  },
+  responses: {
+    200: {
+      description: "Updated provider API key summary.",
+      content: { "application/json": { schema: ProviderApiKeysResponseSchema } },
+    },
+    ...problemResponses,
+  },
+});
+
+providersRouter.openapi(providerApiKeysUpdateRoute, updateProviderApiKeys as never);
+
 const updateProviderRoute = createRoute({
   method: "patch",
   path: "/providers/{id}",
@@ -269,6 +325,26 @@ const revealProviderKeyRoute = createRoute({
 
 providersRouter.openAPIRegistry.registerPath(revealProviderKeyRoute);
 providersRouter.get("/providers/:id{[0-9]+}/key:reveal", requireAuth("admin"), revealProviderKey);
+
+const revealProviderApiKeysRoute = createRoute({
+  method: "get",
+  path: "/providers/{id}/keys:reveal",
+  tags: ["Providers"],
+  summary: "Reveal provider API keys",
+  description: "Returns all unmasked provider API keys for an admin caller and audits access.",
+  "x-required-access": "admin",
+  security,
+  request: { params: ProviderIdParamSchema },
+  responses: {
+    200: {
+      description: "Unmasked provider API keys.",
+      content: { "application/json": { schema: ProviderApiKeysRevealResponseSchema } },
+    },
+    ...problemResponses,
+  },
+});
+
+providersRouter.openapi(revealProviderApiKeysRoute, revealProviderApiKeys as never);
 
 providersRouter.openapi(
   createRoute({
@@ -404,6 +480,53 @@ providersRouter.openapi(
     },
   }),
   getProviderLimitBatch as never
+);
+
+providersRouter.openapi(
+  createRoute({
+    method: "post",
+    path: "/providers/upstream-billing:batch",
+    middleware: requireAuth("admin"),
+    tags: ["Providers"],
+    summary: "Get provider upstream billing snapshots",
+    description:
+      "Returns persisted New-API or sub2api balance and multiplier snapshots, probing only when a snapshot does not exist yet.",
+    "x-required-access": "admin",
+    security,
+    request: {
+      body: { required: true, content: { "application/json": { schema: ProviderIdsBodySchema } } },
+    },
+    responses: {
+      200: {
+        description: "Latest upstream billing snapshots.",
+        content: { "application/json": { schema: ProviderUpstreamBillingArrayResponseSchema } },
+      },
+      ...problemResponses,
+    },
+  }),
+  getProviderUpstreamBillingBatch as never
+);
+
+providersRouter.openapi(
+  createRoute({
+    method: "post",
+    path: "/providers/{id}/cost-multiplier:sync",
+    middleware: requireAuth("admin"),
+    tags: ["Providers"],
+    summary: "Sync provider cost multiplier",
+    description: "Updates the provider cost multiplier from New-API or sub2api billing data.",
+    "x-required-access": "admin",
+    security,
+    request: { params: ProviderIdParamSchema },
+    responses: {
+      200: {
+        description: "Synchronized provider multiplier.",
+        content: { "application/json": { schema: ProviderCostMultiplierSyncResponseSchema } },
+      },
+      ...problemResponses,
+    },
+  }),
+  syncProviderCostMultiplier as never
 );
 
 providersRouter.openapi(

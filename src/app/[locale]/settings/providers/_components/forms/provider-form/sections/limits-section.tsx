@@ -355,6 +355,34 @@ export function LimitsSection({ subSectionRefs }: LimitsSectionProps) {
                     : undefined
                 }
               />
+              <LimitCard
+                label={t("sections.rateLimit.rpm.label")}
+                value={state.rateLimit.rpm}
+                unit={t("sections.rateLimit.rpm.unit")}
+                icon={Gauge}
+                color="bg-amber-500/10 text-amber-500"
+                id={isEdit ? "edit-provider-rpm" : "provider-rpm"}
+                placeholder={t("sections.rateLimit.rpm.placeholder")}
+                onChange={(value) => dispatch({ type: "SET_PROVIDER_RPM", payload: value })}
+                disabled={state.ui.isPending}
+                step="1"
+                isDecimal={false}
+              />
+              <LimitCard
+                label={t("sections.rateLimit.providerConcurrency.label")}
+                value={state.rateLimit.cc}
+                unit={t("sections.rateLimit.providerConcurrency.unit")}
+                icon={Zap}
+                color="bg-violet-500/10 text-violet-500"
+                id={isEdit ? "edit-provider-concurrency" : "provider-concurrency"}
+                placeholder={t("sections.rateLimit.providerConcurrency.placeholder")}
+                onChange={(value) =>
+                  dispatch({ type: "SET_PROVIDER_CONCURRENCY", payload: value })
+                }
+                disabled={state.ui.isPending}
+                step="1"
+                isDecimal={false}
+              />
             </div>
           </FieldGroup>
         </div>

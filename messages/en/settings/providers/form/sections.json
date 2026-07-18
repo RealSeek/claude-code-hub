@@ -15,6 +15,36 @@
     "auth": {
       "title": "Authentication",
       "desc": "Provide your API key for authentication"
+    },
+    "upstreamBillingType": {
+      "label": "Upstream billing system",
+      "desc": "Choose the upstream protocol used to query account balance and sync multipliers",
+      "options": {
+        "auto": "Auto-detect",
+        "newApi": "New-API (account balance and token group multiplier)",
+        "sub2api": "sub2api (balance and multiplier)"
+      }
+    },
+    "upstreamBillingRefreshInterval": {
+      "label": "Active refresh interval (minutes)",
+      "desc": "Scheduled fallback refresh for balance and available multiplier. Enter 0 to disable it; successful requests still use a 10-minute deduplication window",
+      "placeholder": "For example, 30"
+    },
+    "newApiAccount": {
+      "userId": {
+        "label": "New-API user ID",
+        "desc": "Sent as New-Api-User when querying the account balance",
+        "placeholder": "For example, 1"
+      },
+      "cookie": {
+        "label": "New-API session cookie",
+        "desc": "Full cookie from the signed-in account, such as session=...; not the provider API key",
+        "configured": "Account credentials configured; leave blank to keep the current cookie",
+        "placeholder": "Enter the full session cookie",
+        "leaveEmpty": "Leave blank to keep the current cookie",
+        "show": "Show session cookie",
+        "hide": "Hide session cookie"
+      }
     }
   },
   "apiTest": {
@@ -131,6 +161,16 @@
     "limitConcurrent": {
       "label": "Concurrent Sessions Limit",
       "placeholder": "0 means unlimited"
+    },
+    "rpm": {
+      "label": "Provider RPM Limit",
+      "placeholder": "0 means unlimited",
+      "unit": "RPM"
+    },
+    "providerConcurrency": {
+      "label": "Provider In-flight Request Limit",
+      "placeholder": "0 means unlimited",
+      "unit": "requests"
     },
     "limitDaily": {
       "label": "Daily Spend Limit (USD)",

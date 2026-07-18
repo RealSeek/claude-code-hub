@@ -3,6 +3,11 @@ import "server-only";
 import { getEnvConfig } from "@/lib/config/env.schema";
 import { getAllEndpointHealthStatusAsync } from "@/lib/endpoint-circuit-breaker";
 import {
+  hydrateSmartEndpointStates,
+  rankSmartEndpoints,
+  refreshSmartDispatchConfig,
+} from "@/lib/smart-dispatch";
+import {
   findEnabledProviderEndpointsByVendorAndType,
   findProviderEndpointsByVendorAndType,
 } from "@/repository";
@@ -35,7 +40,7 @@ function rankActiveProviderEndpoints(endpoints: ProviderEndpoint[]): ProviderEnd
 
 export function rankProviderEndpoints(endpoints: ProviderEndpoint[]): ProviderEndpoint[] {
   const enabled = endpoints.filter((e) => e.isEnabled && !e.deletedAt);
-  return rankActiveProviderEndpoints(enabled);
+  return rankSmartEndpoints(rankActiveProviderEndpoints(enabled));
 }
 
 export async function getPreferredProviderEndpoints(input: {
@@ -43,6 +48,7 @@ export async function getPreferredProviderEndpoints(input: {
   providerType: ProviderType;
   excludeEndpointIds?: number[];
 }): Promise<ProviderEndpoint[]> {
+  await refreshSmartDispatchConfig();
   const excludeIds = input.excludeEndpointIds ?? [];
   const excludeSet = excludeIds.length > 0 ? new Set(excludeIds) : null;
 
@@ -56,6 +62,8 @@ export async function getPreferredProviderEndpoints(input: {
   if (circuitCandidates.length === 0) {
     return [];
   }
+
+  await hydrateSmartEndpointStates(circuitCandidates.map((endpoint) => endpoint.id));
 
   // When endpoint circuit breaker is disabled, skip circuit check entirely
   if (!getEnvConfig().ENABLE_ENDPOINT_CIRCUIT_BREAKER) {

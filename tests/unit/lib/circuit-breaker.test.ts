@@ -495,4 +495,26 @@ describe("circuit-breaker", () => {
       }
     }
   });
+
+  test("recordFailure 应把上游结构化 reset_seconds 传给智能 Provider 冷却", async () => {
+    setupFakeTime();
+    vi.resetModules();
+    setupCircuitBreakerMocks();
+
+    const { recordFailure } = await import("@/lib/circuit-breaker");
+    const { resetSmartDispatchState, smartProviderReadyAt } = await import("@/lib/smart-dispatch");
+    resetSmartDispatchState();
+
+    const error = Object.assign(new Error("usage limit"), {
+      statusCode: 429,
+      upstreamError: {
+        body: JSON.stringify({ error: { code: "USAGE_LIMIT_REACHED", reset_seconds: 600 } }),
+        headers: { "content-type": "application/json" },
+      },
+    });
+
+    await recordFailure(1, error);
+
+    expect(smartProviderReadyAt(1)).toBe(Date.now() + 600_000);
+  });
 });

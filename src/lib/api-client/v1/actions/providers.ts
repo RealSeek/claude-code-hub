@@ -4,12 +4,15 @@ import type {
   ProviderDisplay,
   ProviderHealthStatus,
   ProviderStatisticsMap,
+  ProviderUpstreamBilling,
+  ProviderUpstreamBillingMap,
 } from "@/types/provider";
 import {
   apiDeleteWithHeaders,
   apiGet,
   apiPatchWithHeaders,
   apiPost,
+  apiPut,
   searchParams,
   toActionResult,
   unwrapItems,
@@ -28,7 +31,35 @@ export type {
   ProviderDisplay,
   ProviderHealthStatus,
   ProviderStatisticsMap,
+  ProviderUpstreamBilling,
+  ProviderUpstreamBillingMap,
 } from "@/types/provider";
+
+export interface ProviderApiKeySummary {
+  id: number | null;
+  label: string | null;
+  maskedKey: string;
+  isEnabled: boolean;
+  sortOrder: number;
+}
+
+export interface ProviderApiKeyReveal {
+  id: number | null;
+  label: string | null;
+  key: string;
+  isEnabled: boolean;
+  sortOrder: number;
+}
+
+export interface ProviderApiKeysResponse {
+  strategy: "sequential" | "round_robin";
+  keys: ProviderApiKeySummary[];
+}
+
+export interface ProviderApiKeysRevealResponse {
+  strategy: "sequential" | "round_robin";
+  keys: ProviderApiKeyReveal[];
+}
 
 const dashboardCompatOptions = {
   headers: {
@@ -168,6 +199,26 @@ export function getProviderLimitUsageBatch(providerIds: number[] | { providerIds
   );
 }
 
+export function getProviderUpstreamBillingBatch(
+  providerIds: number[]
+): Promise<ProviderUpstreamBillingMap> {
+  return apiPost<{ items?: ProviderUpstreamBilling[] }>(
+    "/api/v1/providers/upstream-billing:batch",
+    { providerIds },
+    dashboardCompatOptions
+  ).then((body) => Object.fromEntries((body.items ?? []).map((item) => [item.providerId, item])));
+}
+
+export function syncProviderCostMultiplier(providerId: number) {
+  return toActionResult(
+    apiPost<ProviderUpstreamBilling & { previousMultiplier: number; synced: boolean }>(
+      `/api/v1/providers/${providerId}/cost-multiplier:sync`,
+      undefined,
+      dashboardCompatOptions
+    )
+  );
+}
+
 export function testProviderProxy(data: unknown) {
   return toActionResult(apiPost("/api/v1/providers/test:proxy", data, dashboardCompatOptions));
 }
@@ -175,6 +226,39 @@ export function testProviderProxy(data: unknown) {
 export function getUnmaskedProviderKey(providerId: number) {
   return toActionResult(
     apiGet<{ key: string }>(`/api/v1/providers/${providerId}/key:reveal`, dashboardCompatOptions)
+  );
+}
+
+export function getProviderApiKeys(providerId: number) {
+  return toActionResult(
+    apiGet<ProviderApiKeysResponse>(`/api/v1/providers/${providerId}/keys`, dashboardCompatOptions)
+  );
+}
+
+export function revealProviderApiKeys(providerId: number) {
+  return toActionResult(
+    apiGet<ProviderApiKeysRevealResponse>(
+      `/api/v1/providers/${providerId}/keys:reveal`,
+      dashboardCompatOptions
+    )
+  );
+}
+
+export function updateProviderApiKeys(
+  providerId: number,
+  data: {
+    key_strategy?: "sequential" | "round_robin";
+    api_keys: Array<{
+      id?: number;
+      key?: string;
+      label?: string | null;
+      is_enabled?: boolean;
+      sort_order?: number;
+    }>;
+  }
+) {
+  return toActionResult(
+    apiPut(`/api/v1/providers/${providerId}/keys`, data, dashboardCompatOptions)
   );
 }
 

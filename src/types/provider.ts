@@ -118,6 +118,8 @@ export type ProviderBatchPatchField =
   | "limit_monthly_usd"
   | "limit_total_usd"
   | "limit_concurrent_sessions"
+  | "rpm_limit"
+  | "max_concurrency"
   // Circuit Breaker
   | "circuit_breaker_failure_threshold"
   | "circuit_breaker_open_duration"
@@ -173,6 +175,8 @@ export interface ProviderBatchPatchDraft {
   limit_monthly_usd?: ProviderPatchDraftInput<number>;
   limit_total_usd?: ProviderPatchDraftInput<number>;
   limit_concurrent_sessions?: ProviderPatchDraftInput<number>;
+  rpm_limit?: ProviderPatchDraftInput<number>;
+  max_concurrency?: ProviderPatchDraftInput<number>;
   // Circuit Breaker
   circuit_breaker_failure_threshold?: ProviderPatchDraftInput<number>;
   circuit_breaker_open_duration?: ProviderPatchDraftInput<number>;
@@ -229,6 +233,8 @@ export interface ProviderBatchPatch {
   limit_monthly_usd: ProviderPatchOperation<number>;
   limit_total_usd: ProviderPatchOperation<number>;
   limit_concurrent_sessions: ProviderPatchOperation<number>;
+  rpm_limit: ProviderPatchOperation<number>;
+  max_concurrency: ProviderPatchOperation<number>;
   // Circuit Breaker
   circuit_breaker_failure_threshold: ProviderPatchOperation<number>;
   circuit_breaker_open_duration: ProviderPatchOperation<number>;
@@ -285,6 +291,8 @@ export interface ProviderBatchApplyUpdates {
   limit_monthly_usd?: number | null;
   limit_total_usd?: number | null;
   limit_concurrent_sessions?: number;
+  rpm_limit?: number;
+  max_concurrency?: number;
   // Circuit Breaker
   circuit_breaker_failure_threshold?: number;
   circuit_breaker_open_duration?: number;
@@ -310,6 +318,21 @@ export type GeminiGoogleSearchPreference = "inherit" | "enabled" | "disabled";
 // MCP 透传类型枚举
 export type McpPassthroughType = "none" | "minimax" | "glm" | "custom";
 
+export type ProviderKeyStrategy = "sequential" | "round_robin";
+
+export type ProviderUpstreamBillingType = "auto" | "new-api" | "sub2api";
+
+export interface ProviderApiKey {
+  id: number;
+  providerId: number;
+  key: string;
+  label: string | null;
+  isEnabled: boolean;
+  sortOrder: number;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 // 静态自定义请求头：键值都为字符串；持久化为 jsonb
 export type ProviderCustomHeaders = Record<string, string>;
 
@@ -318,6 +341,10 @@ export interface Provider {
   name: string;
   url: string;
   key: string;
+  keyStrategy: ProviderKeyStrategy;
+  apiKeys: ProviderApiKey[];
+  /** 本次上游请求实际选中的凭据。仅存在于运行时副本中。 */
+  selectedApiKeyId?: number | null;
   // 供应商聚合实体（按官网域名归一）
   providerVendorId: number | null;
   // 是否启用
@@ -330,6 +357,18 @@ export interface Provider {
   groupPriorities: Record<string, number> | null;
   costMultiplier: number;
   groupTag: string | null;
+
+  // 上游计费系统：控制余额与倍率探针使用的协议
+  upstreamBillingType: ProviderUpstreamBillingType;
+  upstreamBillingAccessToken: string | null;
+  upstreamBillingCookie: string | null;
+  upstreamBillingUserId: string | null;
+  /** 定时兜底刷新间隔（分钟）；0 表示关闭定时刷新。 */
+  upstreamBillingRefreshIntervalMinutes: number;
+  /** 最近一次上游计费探测结果；不包含账户凭据。 */
+  upstreamBillingSnapshot: ProviderUpstreamBilling | null;
+  /** 最近一次探测开始时间，成功或失败都会推进，用于防止请求风暴。 */
+  upstreamBillingLastAttemptedAt: Date | null;
 
   // 供应商类型：扩展支持 4 种类型
   providerType: ProviderType;
@@ -424,7 +463,7 @@ export interface Provider {
   // Gemini (generateContent API) parameter overrides (only for gemini/gemini-cli providers)
   geminiGoogleSearchPreference: GeminiGoogleSearchPreference | null;
 
-  // 废弃（保留向后兼容，但不再使用）
+  // Provider 上游智能调度限制；0/null 表示不限制。
   // TPM (Tokens Per Minute): 每分钟可处理的文本总量
   tpm: number | null;
   // RPM (Requests Per Minute): 每分钟可发起的API调用次数
@@ -445,6 +484,8 @@ export interface ProviderDisplay {
   name: string;
   url: string;
   maskedKey: string;
+  keyStrategy: ProviderKeyStrategy;
+  apiKeyCount: number;
   isEnabled: boolean;
   weight: number;
   // 优先级和分组配置
@@ -452,6 +493,11 @@ export interface ProviderDisplay {
   groupPriorities: Record<string, number> | null;
   costMultiplier: number;
   groupTag: string | null;
+  upstreamBillingType: ProviderUpstreamBillingType;
+  hasUpstreamBillingAccessToken: boolean;
+  hasUpstreamBillingCookie: boolean;
+  upstreamBillingUserId: string | null;
+  upstreamBillingRefreshIntervalMinutes: number;
   // 供应商类型
   providerType: ProviderType;
   // 供应商聚合实体（按官网域名归一）
@@ -513,7 +559,7 @@ export interface ProviderDisplay {
   anthropicThinkingBudgetPreference: AnthropicThinkingBudgetPreference | null;
   anthropicAdaptiveThinking: AnthropicAdaptiveThinkingConfig | null;
   geminiGoogleSearchPreference: GeminiGoogleSearchPreference | null;
-  // 废弃字段（保留向后兼容）
+  // Provider 上游智能调度限制；0/null 表示不限制
   tpm: number | null;
   rpm: number | null;
   rpd: number | null;
@@ -543,6 +589,42 @@ export interface ProviderStatistics {
  */
 export type ProviderStatisticsMap = Record<number, ProviderStatistics>;
 
+export type ProviderUpstreamBillingSource = "new-api" | "sub2api";
+export type ProviderBalanceAggregation = "single_key" | "sum_of_keys" | "unavailable";
+
+export interface ProviderUpstreamBillingKey {
+  keyId: number | null;
+  keyLabel: string | null;
+  source: ProviderUpstreamBillingSource | null;
+  status: "ok" | "partial" | "unsupported" | "error";
+  balanceUsd: number | null;
+  balanceRaw: number | null;
+  balanceScope?: "key" | "account" | null;
+  quotaPerUnit: number | null;
+  effectiveMultiplier: number | null;
+  observedAt: string;
+  errorCode: string | null;
+}
+
+export interface ProviderUpstreamBilling {
+  providerId: number;
+  source: ProviderUpstreamBillingSource | null;
+  status: "ok" | "partial" | "unsupported" | "error";
+  balanceUsd: number | null;
+  balanceRaw: number | null;
+  balanceScope?: "key" | "account" | null;
+  quotaPerUnit: number | null;
+  effectiveMultiplier: number | null;
+  observedAt: string;
+  errorCode: string | null;
+  balanceAggregation?: ProviderBalanceAggregation;
+  successfulKeyCount?: number;
+  failedKeyCount?: number;
+  keys?: ProviderUpstreamBillingKey[];
+}
+
+export type ProviderUpstreamBillingMap = Record<number, ProviderUpstreamBilling>;
+
 /**
  * Provider-level (key/credential) circuit breaker snapshot.
  * Mirrors the shape returned by `/api/v1/providers/health`.
@@ -563,7 +645,14 @@ export type ProviderHealthStatus = Record<number, ProviderCircuitHealth>;
 export interface CreateProviderData {
   name: string;
   url: string;
-  key: string;
+  key?: string;
+  key_strategy?: ProviderKeyStrategy;
+  api_keys?: Array<{
+    key: string;
+    label?: string | null;
+    is_enabled?: boolean;
+    sort_order?: number;
+  }>;
   // 是否启用（默认 true）- 数据库字段名
   is_enabled?: boolean;
   // 权重（默认 1）
@@ -574,6 +663,11 @@ export interface CreateProviderData {
   group_priorities?: Record<string, number> | null;
   cost_multiplier?: number;
   group_tag?: string | null;
+  upstream_billing_type?: ProviderUpstreamBillingType;
+  upstream_billing_access_token?: string | null;
+  upstream_billing_cookie?: string | null;
+  upstream_billing_user_id?: string | null;
+  upstream_billing_refresh_interval_minutes?: number;
 
   // 供应商类型和模型配置
   provider_type?: ProviderType;
@@ -649,6 +743,14 @@ export interface UpdateProviderData {
   name?: string;
   url?: string;
   key?: string;
+  key_strategy?: ProviderKeyStrategy;
+  api_keys?: Array<{
+    id?: number;
+    key?: string;
+    label?: string | null;
+    is_enabled?: boolean;
+    sort_order?: number;
+  }>;
   // 是否启用 - 数据库字段名
   is_enabled?: boolean;
   // 权重（0-100）
@@ -659,6 +761,11 @@ export interface UpdateProviderData {
   group_priorities?: Record<string, number> | null;
   cost_multiplier?: number;
   group_tag?: string | null;
+  upstream_billing_type?: ProviderUpstreamBillingType;
+  upstream_billing_access_token?: string | null;
+  upstream_billing_cookie?: string | null;
+  upstream_billing_user_id?: string | null;
+  upstream_billing_refresh_interval_minutes?: number;
 
   // 供应商类型和模型配置
   provider_type?: ProviderType;

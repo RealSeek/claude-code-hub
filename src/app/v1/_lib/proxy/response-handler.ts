@@ -9,6 +9,8 @@ import { getCachedSystemSettings } from "@/lib/config/system-settings-cache";
 import { emitProxyLangfuseTrace } from "@/lib/langfuse/emit-proxy-trace";
 import { logger } from "@/lib/logger";
 import { requestCloudPriceTableSync } from "@/lib/price-sync/cloud-price-updater";
+import { recordProviderApiKeySuccess } from "@/lib/provider-key-dispatch";
+import { triggerProviderUpstreamBillingRefresh } from "@/lib/provider-upstream-billing-request-trigger";
 import { ProxyStatusTracker } from "@/lib/proxy-status-tracker";
 import { RateLimitService } from "@/lib/rate-limit";
 import { deleteLiveChain } from "@/lib/redis/live-chain-store";
@@ -1054,7 +1056,13 @@ async function finalizeDeferredStreamingFinalizationIfNeeded(
       try {
         // 动态导入：避免 proxy 模块与熔断器模块之间潜在的循环依赖。
         const { recordFailure } = await import("@/lib/circuit-breaker");
-        await recordFailure(meta.providerId, new Error(errorMessage ?? "STREAM_ABORTED"));
+        await recordFailure(meta.providerId, new Error(errorMessage ?? "STREAM_ABORTED"), {
+          statusCode: effectiveStatusCode,
+          headers: meta.upstreamHeaders,
+          body: allContent,
+          providerKeyId: meta.selectedApiKeyId,
+          provider: providerForChain,
+        });
       } catch (cbError) {
         logger.warn("[ResponseHandler] Failed to record streaming failure in circuit breaker", {
           providerId: meta.providerId,
@@ -1111,7 +1119,13 @@ async function finalizeDeferredStreamingFinalizationIfNeeded(
       try {
         // 动态导入：避免 proxy 模块与熔断器模块之间潜在的循环依赖。
         const { recordFailure } = await import("@/lib/circuit-breaker");
-        await recordFailure(meta.providerId, new Error(detected.code));
+        await recordFailure(meta.providerId, new Error(detected.code), {
+          statusCode: effectiveStatusCode,
+          headers: meta.upstreamHeaders,
+          body: allContent,
+          providerKeyId: meta.selectedApiKeyId,
+          provider: providerForChain,
+        });
       } catch (cbError) {
         logger.warn("[ResponseHandler] Failed to record fake-200 error in circuit breaker", {
           providerId: meta.providerId,
@@ -1168,7 +1182,13 @@ async function finalizeDeferredStreamingFinalizationIfNeeded(
     if (effectiveStatusCode !== 404 && session.getEndpointPolicy().allowCircuitBreakerAccounting) {
       try {
         const { recordFailure } = await import("@/lib/circuit-breaker");
-        await recordFailure(meta.providerId, new Error(errorMessage));
+        await recordFailure(meta.providerId, new Error(errorMessage), {
+          statusCode: effectiveStatusCode,
+          headers: meta.upstreamHeaders,
+          body: allContent,
+          providerKeyId: meta.selectedApiKeyId,
+          provider: providerForChain,
+        });
       } catch (cbError) {
         logger.warn("[ResponseHandler] Failed to record non-200 error in circuit breaker", {
           providerId: meta.providerId,
@@ -1206,7 +1226,11 @@ async function finalizeDeferredStreamingFinalizationIfNeeded(
   if (meta.endpointId != null) {
     try {
       const { recordEndpointSuccess } = await import("@/lib/endpoint-circuit-breaker");
-      await recordEndpointSuccess(meta.endpointId);
+      if (session.ttfbMs == null) {
+        await recordEndpointSuccess(meta.endpointId);
+      } else {
+        await recordEndpointSuccess(meta.endpointId, session.ttfbMs, session.startTime);
+      }
     } catch (endpointError) {
       logger.warn("[ResponseHandler] Failed to record endpoint success (stream finalized)", {
         endpointId: meta.endpointId,
@@ -1217,8 +1241,15 @@ async function finalizeDeferredStreamingFinalizationIfNeeded(
   }
 
   try {
+    if (meta.selectedApiKeyId != null) {
+      recordProviderApiKeySuccess(meta.selectedApiKeyId, session.startTime);
+    }
     const { recordSuccess } = await import("@/lib/circuit-breaker");
-    await recordSuccess(meta.providerId);
+    if (session.ttfbMs == null) {
+      await recordSuccess(meta.providerId);
+    } else {
+      await recordSuccess(meta.providerId, session.ttfbMs, session.startTime);
+    }
   } catch (cbError) {
     logger.warn("[ResponseHandler] Failed to record streaming success in circuit breaker", {
       providerId: meta.providerId,
@@ -1465,7 +1496,11 @@ export class ProxyResponseHandler {
               if (session.getEndpointPolicy().allowCircuitBreakerAccounting) {
                 try {
                   const { recordFailure } = await import("@/lib/circuit-breaker");
-                  await recordFailure(provider.id, new Error(errorMessageForFinalize));
+                  await recordFailure(provider.id, new Error(errorMessageForFinalize), {
+                    statusCode,
+                    headers: response.headers,
+                    body: responseText,
+                  });
                 } catch (cbError) {
                   logger.warn(
                     "ResponseHandler: Failed to record non-200 error in circuit breaker (passthrough)",
@@ -1872,7 +1907,11 @@ export class ProxyResponseHandler {
           if (session.getEndpointPolicy().allowCircuitBreakerAccounting) {
             try {
               const { recordFailure } = await import("@/lib/circuit-breaker");
-              await recordFailure(provider.id, new Error(errorMessageForDb));
+              await recordFailure(provider.id, new Error(errorMessageForDb), {
+                statusCode,
+                headers: response.headers,
+                body: responseText,
+              });
             } catch (cbError) {
               logger.warn("ResponseHandler: Failed to record non-200 error in circuit breaker", {
                 providerId: provider.id,
@@ -4408,6 +4447,9 @@ export async function finalizeRequestStats(
       swapCacheTtlApplied: session.provider?.swapCacheTtlBilling ?? false,
       specialSettings: session.getSpecialSettings() ?? undefined,
     });
+    if (statusCode >= 200 && statusCode < 300) {
+      triggerProviderUpstreamBillingRefresh(providerIdForPersistence ?? null);
+    }
     return null;
   }
 
@@ -4523,6 +4565,10 @@ export async function finalizeRequestStats(
     if (session.shouldTrackSessionObservability()) {
       void deleteLiveChain(session.sessionId, session.requestSequence);
     }
+  }
+
+  if (statusCode >= 200 && statusCode < 300) {
+    triggerProviderUpstreamBillingRefresh(providerIdForPersistence ?? null);
   }
 
   return normalizedUsage;

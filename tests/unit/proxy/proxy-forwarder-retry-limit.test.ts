@@ -98,6 +98,7 @@ import {
 } from "@/app/v1/_lib/proxy/errors";
 import { ProxySession } from "@/app/v1/_lib/proxy/session";
 import { logger } from "@/lib/logger";
+import { resetProviderKeyDispatchState } from "@/lib/provider-key-dispatch";
 import type { Provider, ProviderEndpoint, ProviderType } from "@/types/provider";
 
 function makeEndpoint(input: {
@@ -134,6 +135,8 @@ function createProvider(overrides: Partial<Provider> = {}): Provider {
     name: "test-provider",
     url: "https://provider.example.com",
     key: "test-key",
+    keyStrategy: "round_robin",
+    apiKeys: [],
     providerVendorId: 123,
     isEnabled: true,
     weight: 1,
@@ -240,6 +243,7 @@ function createSession(requestUrl: URL = new URL("https://example.com/v1/message
 describe("ProxyForwarder - raw passthrough fallback parity", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetProviderKeyDispatchState();
     vi.mocked(categorizeErrorAsync).mockResolvedValue(ErrorCategory.PROVIDER_ERROR);
   });
 
@@ -297,6 +301,106 @@ describe("ProxyForwarder - raw passthrough fallback parity", () => {
       expect(doForward).toHaveBeenCalledTimes(1);
       expect(selectAlternative).toHaveBeenCalledTimes(1);
       expect(mocks.recordFailure).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("ProxyForwarder - Provider 多 Key 轮换", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetProviderKeyDispatchState();
+    vi.mocked(categorizeErrorAsync).mockResolvedValue(ErrorCategory.PROVIDER_ERROR);
+  });
+
+  test("每个 Key 只尝试一次，全部冷却后立即切换 Provider", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const provider = createProvider({
+        providerVendorId: null,
+        maxRetryAttempts: 5,
+        key: "key-a",
+        keyStrategy: "sequential",
+        selectedApiKeyId: 101,
+        apiKeys: [
+          {
+            id: 101,
+            providerId: 1,
+            key: "key-a",
+            label: "A",
+            isEnabled: true,
+            sortOrder: 0,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          },
+          {
+            id: 102,
+            providerId: 1,
+            key: "key-b",
+            label: "B",
+            isEnabled: true,
+            sortOrder: 1,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          },
+        ],
+      });
+      const fallback = createProvider({
+        id: 2,
+        name: "fallback",
+        providerVendorId: null,
+        key: "fallback-key",
+        keyStrategy: "sequential",
+        apiKeys: [],
+      });
+      const session = createSession();
+      session.setProvider(provider);
+
+      const doForward = vi.spyOn(
+        ProxyForwarder as unknown as { doForward: (...args: unknown[]) => Promise<Response> },
+        "doForward"
+      );
+      const selectAlternative = vi.spyOn(
+        ProxyForwarder as unknown as {
+          selectAlternative: (...args: unknown[]) => Promise<Provider | null>;
+        },
+        "selectAlternative"
+      );
+      selectAlternative.mockResolvedValueOnce(fallback);
+
+      const rateLimitError = () =>
+        new ProxyError("Provider returned 429", 429, {
+          body: '{"error":{"type":"rate_limit_error"}}',
+          headers: { "retry-after": "60" },
+        });
+      doForward
+        .mockRejectedValueOnce(rateLimitError())
+        .mockRejectedValueOnce(rateLimitError())
+        .mockResolvedValueOnce(
+          new Response("{}", {
+            status: 200,
+            headers: { "content-type": "application/json", "content-length": "2" },
+          })
+        );
+
+      const responsePromise = ProxyForwarder.send(session);
+      await vi.runAllTimersAsync();
+      const response = await responsePromise;
+
+      expect(response.status).toBe(200);
+      expect(doForward).toHaveBeenCalledTimes(3);
+      expect(doForward.mock.calls.map((call) => (call[1] as Provider).key)).toEqual([
+        "key-a",
+        "key-b",
+        "fallback-key",
+      ]);
+      expect(mocks.recordFailure).toHaveBeenCalledTimes(1);
+      expect(mocks.recordFailure.mock.calls[0]?.[2]).toMatchObject({
+        providerKeyId: 102,
+        providerKeyFailureAlreadyRecorded: true,
+      });
     } finally {
       vi.useRealTimers();
     }

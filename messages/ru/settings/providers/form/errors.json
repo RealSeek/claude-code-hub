@@ -3,6 +3,8 @@
   "deleteFailed": "Не удалось удалить провайдера",
   "groupTagTooLong": "Список групп провайдера слишком длинный (макс. {max} символов всего)",
   "keyRequired": "Введите API-ключ",
+  "newApiCookieRequired": "Введите Session Cookie New-API",
+  "newApiUserIdRequired": "Введите ID пользователя New-API",
   "nameRequired": "Введите имя провайдера",
   "invalidUrl": "Введите корректный адрес API",
   "urlRequired": "Введите URL провайдера",

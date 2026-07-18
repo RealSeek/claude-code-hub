@@ -70,6 +70,17 @@ export const ACTION_MIGRATION_MATRIX = [
     exportPolicy: "all-action-exports",
   },
   {
+    module: "provider-upstream-billing",
+    sourceFile: "provider-upstream-billing.ts",
+    resource: "providers",
+    endpointFamilies: [
+      "/api/v1/providers/upstream-billing:batch",
+      "/api/v1/providers/{providerId}/cost-multiplier:sync",
+    ],
+    access: "admin",
+    exportPolicy: "all-action-exports",
+  },
+  {
     module: "provider-endpoints",
     sourceFile: "provider-endpoints.ts",
     resource: "provider-endpoints",
