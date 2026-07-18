@@ -32,7 +32,12 @@ import {
 } from "@/lib/custom-headers";
 import { PROVIDER_BATCH_PATCH_ERROR_CODES } from "@/lib/provider-batch-patch-error-codes";
 import { isValidUrl } from "@/lib/utils/validation";
-import type { ProviderDisplay, ProviderEndpoint, ProviderType } from "@/types/provider";
+import type {
+  ProviderDisplay,
+  ProviderEndpoint,
+  ProviderType,
+  ProviderUpstreamBilling,
+} from "@/types/provider";
 import { invalidateProviderQueries } from "../../invalidate-provider-queries";
 import { FormTabNav, NAV_ORDER, PARENT_MAP, TAB_ORDER } from "./components/form-tab-nav";
 import { ProviderFormProvider, useProviderForm } from "./provider-form-context";
@@ -48,6 +53,7 @@ export interface ProviderFormProps {
   mode: "create" | "edit";
   onSuccess?: () => void;
   provider?: ProviderDisplay;
+  upstreamBilling?: ProviderUpstreamBilling;
   cloneProvider?: ProviderDisplay;
   enableMultiProviderTypes: boolean;
   hideUrl?: boolean;
@@ -79,10 +85,12 @@ function ProviderFormContent({
   onSuccess,
   autoUrlPending,
   resolvedUrl,
+  upstreamBilling,
 }: {
   onSuccess?: () => void;
   autoUrlPending: boolean;
   resolvedUrl?: string | null;
+  upstreamBilling?: ProviderUpstreamBilling;
 }) {
   const t = useTranslations("settings.providers.form");
   const tBatchEdit = useTranslations("settings.providers.batchEdit");
@@ -328,6 +336,8 @@ function ProviderFormContent({
 
         // Handle key: in edit mode, only include if user provided a new key
         const trimmedKey = state.basic.key.trim();
+        const upstreamBillingAccessToken = state.basic.upstreamBillingAccessToken?.trim() ?? "";
+        const upstreamBillingRefreshToken = state.basic.upstreamBillingRefreshToken?.trim() ?? "";
         const upstreamBillingCookie = state.basic.upstreamBillingCookie.trim();
         const apiKeys = state.basic.apiKeysText
           .split(/\r?\n/)
@@ -363,6 +373,16 @@ function ProviderFormContent({
             : {}),
           website_url: state.basic.websiteUrl?.trim() || null,
           upstream_billing_type: state.basic.upstreamBillingType,
+          ...(state.basic.upstreamBillingAccessToken === null
+            ? { upstream_billing_access_token: null }
+            : upstreamBillingAccessToken
+              ? { upstream_billing_access_token: upstreamBillingAccessToken }
+              : {}),
+          ...(state.basic.upstreamBillingRefreshToken === null
+            ? { upstream_billing_refresh_token: null }
+            : upstreamBillingRefreshToken
+              ? { upstream_billing_refresh_token: upstreamBillingRefreshToken }
+              : {}),
           ...(upstreamBillingCookie ? { upstream_billing_cookie: upstreamBillingCookie } : {}),
           upstream_billing_user_id: state.basic.upstreamBillingUserId.trim() || null,
           upstream_billing_refresh_interval_minutes:
@@ -680,6 +700,7 @@ function ProviderFormContent({
             >
               <BasicInfoSection
                 autoUrlPending={autoUrlPending}
+                upstreamBilling={upstreamBilling}
                 endpointPool={
                   !hideUrl && resolvedEndpointPoolVendorId != null
                     ? {
@@ -854,6 +875,7 @@ export function ProviderForm({
   mode,
   onSuccess,
   provider,
+  upstreamBilling,
   cloneProvider,
   enableMultiProviderTypes,
   hideUrl = false,
@@ -923,6 +945,7 @@ export function ProviderForm({
         onSuccess={onSuccess}
         autoUrlPending={autoUrlPending}
         resolvedUrl={resolvedUrl}
+        upstreamBilling={upstreamBilling}
       />
     </ProviderFormProvider>
   );

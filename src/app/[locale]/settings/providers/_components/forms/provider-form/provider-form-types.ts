@@ -49,6 +49,8 @@ export interface BasicInfoState {
   keyStrategy: "sequential" | "round_robin";
   websiteUrl: string;
   upstreamBillingType: ProviderUpstreamBillingType;
+  upstreamBillingAccessToken: string | null;
+  upstreamBillingRefreshToken: string | null;
   upstreamBillingCookie: string;
   upstreamBillingUserId: string;
   upstreamBillingRefreshIntervalMinutes: number;
@@ -155,6 +157,8 @@ export type ProviderFormAction =
   | { type: "SET_KEY_STRATEGY"; payload: "sequential" | "round_robin" }
   | { type: "SET_WEBSITE_URL"; payload: string }
   | { type: "SET_UPSTREAM_BILLING_TYPE"; payload: ProviderUpstreamBillingType }
+  | { type: "SET_UPSTREAM_BILLING_ACCESS_TOKEN"; payload: string | null }
+  | { type: "SET_UPSTREAM_BILLING_REFRESH_TOKEN"; payload: string | null }
   | { type: "SET_UPSTREAM_BILLING_COOKIE"; payload: string }
   | { type: "SET_UPSTREAM_BILLING_USER_ID"; payload: string }
   | { type: "SET_UPSTREAM_BILLING_REFRESH_INTERVAL_MINUTES"; payload: number }

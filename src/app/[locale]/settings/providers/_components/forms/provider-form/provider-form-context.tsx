@@ -157,6 +157,8 @@ export function createInitialState(
         keyStrategy: "round_robin",
         websiteUrl: "",
         upstreamBillingType: "auto",
+        upstreamBillingAccessToken: "",
+        upstreamBillingRefreshToken: "",
         upstreamBillingCookie: "",
         upstreamBillingUserId: "",
         upstreamBillingRefreshIntervalMinutes: 30,
@@ -368,6 +370,8 @@ export function createInitialState(
         keyStrategy: "round_robin",
         websiteUrl: "",
         upstreamBillingType: "auto",
+        upstreamBillingAccessToken: "",
+        upstreamBillingRefreshToken: "",
         upstreamBillingCookie: "",
         upstreamBillingUserId: "",
         upstreamBillingRefreshIntervalMinutes: 30,
@@ -454,6 +458,8 @@ export function createInitialState(
       keyStrategy: sourceProvider?.keyStrategy ?? "round_robin",
       websiteUrl: cloneSafeUrlValue(sourceProvider?.websiteUrl ?? preset?.websiteUrl, isClone),
       upstreamBillingType: sourceProvider?.upstreamBillingType ?? "auto",
+      upstreamBillingAccessToken: "",
+      upstreamBillingRefreshToken: "",
       upstreamBillingCookie: "",
       upstreamBillingUserId: sourceProvider?.upstreamBillingUserId ?? "",
       upstreamBillingRefreshIntervalMinutes:
@@ -569,6 +575,10 @@ export function providerFormReducer(
       return { ...state, basic: { ...state.basic, websiteUrl: action.payload } };
     case "SET_UPSTREAM_BILLING_TYPE":
       return { ...state, basic: { ...state.basic, upstreamBillingType: action.payload } };
+    case "SET_UPSTREAM_BILLING_ACCESS_TOKEN":
+      return { ...state, basic: { ...state.basic, upstreamBillingAccessToken: action.payload } };
+    case "SET_UPSTREAM_BILLING_REFRESH_TOKEN":
+      return { ...state, basic: { ...state.basic, upstreamBillingRefreshToken: action.payload } };
     case "SET_UPSTREAM_BILLING_COOKIE":
       return { ...state, basic: { ...state.basic, upstreamBillingCookie: action.payload } };
     case "SET_UPSTREAM_BILLING_USER_ID":

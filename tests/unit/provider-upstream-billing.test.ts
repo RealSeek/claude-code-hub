@@ -22,6 +22,7 @@ const config: ProviderUpstreamBillingConfig = {
   customHeaders: null,
   upstreamBillingType: "auto",
   upstreamBillingAccessToken: "account-access-token",
+  upstreamBillingRefreshToken: null,
   upstreamBillingCookie: "session=test-cookie",
   upstreamBillingUserId: "42",
 };
@@ -75,6 +76,174 @@ describe("provider upstream billing", () => {
       effectiveMultiplier: 0.75,
       observedAt: "2026-07-18T00:00:00Z",
     });
+    expect(fetchMock.mock.calls.map(([input]) => String(input))).not.toEqual(
+      expect.arrayContaining([expect.stringContaining("/api/v1/keys")])
+    );
+  });
+
+  it("sub2api 新版倍率接口缺失时仍保留首 Key 余额", async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith("/v1/sub2api/billing")) return jsonResponse({}, 404);
+      if (url.endsWith("/v1/usage")) {
+        return jsonResponse({ mode: "quota_limited", remaining: 8.5 });
+      }
+      return jsonResponse({}, 404);
+    });
+
+    const result = await probeProviderUpstreamBilling(
+      {
+        ...config,
+        upstreamBillingType: "sub2api",
+        upstreamBillingAccessToken: null,
+        upstreamBillingRefreshToken: null,
+      },
+      fetchMock as typeof fetch
+    );
+
+    expect(result).toMatchObject({
+      source: "sub2api",
+      status: "partial",
+      balanceUsd: 8.5,
+      balanceScope: "key",
+      effectiveMultiplier: null,
+      errorCode: "sub2api_account_credentials_missing",
+    });
+  });
+
+  it("sub2api 新版倍率接口缺失时通过 JWT 精确匹配当前 Key", async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/v1/sub2api/billing")) return jsonResponse({}, 404);
+      if (url.endsWith("/v1/usage")) return jsonResponse({ balance: 20 });
+
+      const headers = new Headers(init?.headers);
+      expect(headers.get("authorization")).toBe("Bearer account-access-token");
+      if (url.includes("/api/v1/keys?")) {
+        return jsonResponse({
+          code: 0,
+          data: {
+            items: [
+              { id: 1, key: "sk-other", group_id: 3 },
+              { id: 9, key: "sk-test", group_id: 5 },
+            ],
+            total: 2,
+          },
+        });
+      }
+      if (url.endsWith("/api/v1/groups/available")) {
+        return jsonResponse({
+          code: 0,
+          data: [{ id: 5, rate_multiplier: 0.1, peak_rate_enabled: false }],
+        });
+      }
+      if (url.endsWith("/api/v1/groups/rates")) {
+        return jsonResponse({ code: 0, data: { "5": 0.06 } });
+      }
+      if (url.includes("/api/v1/usage?api_key_id=9")) {
+        return jsonResponse({
+          code: 0,
+          data: { items: [{ rate_multiplier: 0.02 }], total: 1 },
+        });
+      }
+      return jsonResponse({}, 404);
+    });
+
+    const result = await probeProviderUpstreamBilling(
+      { ...config, upstreamBillingType: "sub2api" },
+      fetchMock as typeof fetch
+    );
+
+    expect(result).toMatchObject({
+      source: "sub2api",
+      status: "ok",
+      balanceUsd: 20,
+      effectiveMultiplier: 0.02,
+      errorCode: null,
+    });
+  });
+
+  it("sub2api JWT 过期时只刷新一次并持久化轮换后的令牌", async () => {
+    const persistTokens = vi.fn(async () => undefined);
+    let keyRequestCount = 0;
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/v1/sub2api/billing")) return jsonResponse({}, 404);
+      if (url.endsWith("/v1/usage")) return jsonResponse({ balance: 4 });
+      if (url.endsWith("/api/v1/auth/refresh")) {
+        expect(init?.method).toBe("POST");
+        expect(JSON.parse(String(init?.body))).toEqual({ refresh_token: "refresh-old" });
+        return jsonResponse({
+          code: 0,
+          data: {
+            access_token: "access-new",
+            refresh_token: "refresh-new",
+            expires_in: 3600,
+            token_type: "Bearer",
+          },
+        });
+      }
+
+      const authorization = new Headers(init?.headers).get("authorization");
+      if (url.includes("/api/v1/keys?")) {
+        keyRequestCount += 1;
+        if (keyRequestCount === 1) {
+          expect(authorization).toBe("Bearer access-old");
+          return jsonResponse({ code: 401, message: "expired" }, 401);
+        }
+        expect(authorization).toBe("Bearer access-new");
+        return jsonResponse({
+          code: 0,
+          data: { items: [{ id: 9, key: "sk-test", group_id: 5 }], total: 1 },
+        });
+      }
+      expect(authorization).toBe("Bearer access-new");
+      if (url.endsWith("/api/v1/groups/available")) {
+        return jsonResponse({
+          code: 0,
+          data: [{ id: 5, rate_multiplier: 0.02, peak_rate_enabled: false }],
+        });
+      }
+      if (url.endsWith("/api/v1/groups/rates")) return jsonResponse({ code: 0, data: null });
+      if (url.includes("/api/v1/usage?")) {
+        return jsonResponse({ code: 0, data: { items: [], total: 0 } });
+      }
+      return jsonResponse({}, 404);
+    });
+
+    const result = await probeProviderUpstreamBilling(
+      {
+        ...config,
+        upstreamBillingType: "sub2api",
+        upstreamBillingAccessToken: "access-old",
+        upstreamBillingRefreshToken: "refresh-old",
+        persistSub2ApiTokens: persistTokens,
+      },
+      fetchMock as typeof fetch
+    );
+
+    expect(result).toMatchObject({ status: "ok", effectiveMultiplier: 0.02 });
+    expect(persistTokens).toHaveBeenCalledOnce();
+    expect(persistTokens).toHaveBeenCalledWith("access-new", "refresh-new");
+    expect(
+      fetchMock.mock.calls.filter(([input]) => String(input).endsWith("/api/v1/auth/refresh"))
+    ).toHaveLength(1);
+  });
+
+  it("官方渠道完全跳过上游探测", async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({}, 500));
+
+    const result = await probeProviderUpstreamBilling(
+      { ...config, upstreamBillingType: "official" },
+      fetchMock as typeof fetch
+    );
+
+    expect(result).toMatchObject({
+      source: null,
+      status: "unsupported",
+      errorCode: "official_billing_disabled",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("拒绝 sub2api 返回的负余额", async () => {
@@ -160,6 +329,82 @@ describe("provider upstream billing", () => {
     const result = await probeProviderUpstreamBilling(config, fetchMock as typeof fetch);
 
     expect(result).toMatchObject({ status: "error", errorCode: "invalid_balance" });
+  });
+
+  it("New-API Cookie 被拒绝时返回明确的失效错误", async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({ success: false, message: "unauthorized" }, 401)
+    );
+
+    const result = await probeProviderUpstreamBilling(
+      { ...config, upstreamBillingType: "new-api" },
+      fetchMock as typeof fetch
+    );
+
+    expect(result).toMatchObject({
+      source: "new-api",
+      status: "error",
+      errorCode: "new_api_cookie_invalid",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("New-API 返回 HTML 登录页时判定 Cookie 已失效", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response("<html><body>login</body></html>", {
+          status: 200,
+          headers: { "content-type": "text/html; charset=utf-8" },
+        })
+    );
+
+    const result = await probeProviderUpstreamBilling(
+      { ...config, upstreamBillingType: "new-api" },
+      fetchMock as typeof fetch
+    );
+
+    expect(result).toMatchObject({ status: "error", errorCode: "new_api_cookie_invalid" });
+  });
+
+  it("New-API 后续账户接口拒绝 Cookie 时不保留为部分成功", async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith("/api/user/self")) {
+        return jsonResponse({
+          success: true,
+          data: { quota: 500_000, group: "default" },
+        });
+      }
+      return jsonResponse({ success: false, message: "unauthorized" }, 403);
+    });
+
+    const result = await probeProviderUpstreamBilling(
+      { ...config, upstreamBillingType: "new-api" },
+      fetchMock as typeof fetch
+    );
+
+    expect(result).toMatchObject({
+      status: "error",
+      errorCode: "new_api_cookie_invalid",
+    });
+  });
+
+  it("New-API Bearer 凭据被拒绝时返回独立错误", async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ success: false }, 401));
+
+    const result = await probeProviderUpstreamBilling(
+      {
+        ...config,
+        upstreamBillingType: "new-api",
+        upstreamBillingCookie: null,
+      },
+      fetchMock as typeof fetch
+    );
+
+    expect(result).toMatchObject({
+      status: "error",
+      errorCode: "new_api_access_token_invalid",
+    });
   });
 
   it("对不支持 billing 接口的上游返回 unsupported", async () => {

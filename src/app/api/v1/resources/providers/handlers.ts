@@ -737,6 +737,7 @@ function sanitizeProvider(
     groupTag: provider.groupTag,
     upstreamBillingType: provider.upstreamBillingType,
     hasUpstreamBillingAccessToken: provider.hasUpstreamBillingAccessToken,
+    hasUpstreamBillingRefreshToken: provider.hasUpstreamBillingRefreshToken,
     hasUpstreamBillingCookie: provider.hasUpstreamBillingCookie,
     upstreamBillingUserId: provider.upstreamBillingUserId,
     upstreamBillingRefreshIntervalMinutes: provider.upstreamBillingRefreshIntervalMinutes,

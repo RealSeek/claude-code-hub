@@ -61,6 +61,7 @@ export async function runProviderUpstreamBillingRefreshCycle(): Promise<void> {
     const providers = (await findAllProvidersFresh()).filter(
       (provider) =>
         provider.isEnabled &&
+        provider.upstreamBillingType !== "official" &&
         isDue(
           provider.upstreamBillingLastAttemptedAt,
           provider.upstreamBillingRefreshIntervalMinutes,

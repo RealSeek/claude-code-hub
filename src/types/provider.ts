@@ -320,7 +320,7 @@ export type McpPassthroughType = "none" | "minimax" | "glm" | "custom";
 
 export type ProviderKeyStrategy = "sequential" | "round_robin";
 
-export type ProviderUpstreamBillingType = "auto" | "new-api" | "sub2api";
+export type ProviderUpstreamBillingType = "auto" | "new-api" | "sub2api" | "official";
 
 export interface ProviderApiKey {
   id: number;
@@ -361,6 +361,7 @@ export interface Provider {
   // 上游计费系统：控制余额与倍率探针使用的协议
   upstreamBillingType: ProviderUpstreamBillingType;
   upstreamBillingAccessToken: string | null;
+  upstreamBillingRefreshToken: string | null;
   upstreamBillingCookie: string | null;
   upstreamBillingUserId: string | null;
   /** 定时兜底刷新间隔（分钟）；0 表示关闭定时刷新。 */
@@ -495,6 +496,7 @@ export interface ProviderDisplay {
   groupTag: string | null;
   upstreamBillingType: ProviderUpstreamBillingType;
   hasUpstreamBillingAccessToken: boolean;
+  hasUpstreamBillingRefreshToken: boolean;
   hasUpstreamBillingCookie: boolean;
   upstreamBillingUserId: string | null;
   upstreamBillingRefreshIntervalMinutes: number;
@@ -665,6 +667,7 @@ export interface CreateProviderData {
   group_tag?: string | null;
   upstream_billing_type?: ProviderUpstreamBillingType;
   upstream_billing_access_token?: string | null;
+  upstream_billing_refresh_token?: string | null;
   upstream_billing_cookie?: string | null;
   upstream_billing_user_id?: string | null;
   upstream_billing_refresh_interval_minutes?: number;
@@ -763,6 +766,7 @@ export interface UpdateProviderData {
   group_tag?: string | null;
   upstream_billing_type?: ProviderUpstreamBillingType;
   upstream_billing_access_token?: string | null;
+  upstream_billing_refresh_token?: string | null;
   upstream_billing_cookie?: string | null;
   upstream_billing_user_id?: string | null;
   upstream_billing_refresh_interval_minutes?: number;

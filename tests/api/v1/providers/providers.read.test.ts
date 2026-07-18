@@ -99,6 +99,7 @@ function provider(overrides: Partial<ProviderDisplay> = {}): ProviderDisplay {
     groupTag: "default",
     upstreamBillingType: "new-api",
     hasUpstreamBillingAccessToken: true,
+    hasUpstreamBillingRefreshToken: true,
     hasUpstreamBillingCookie: true,
     upstreamBillingUserId: "42",
     providerType: "claude",
@@ -470,10 +471,12 @@ describe("v1 providers read endpoints", () => {
       mcpPassthroughUrl: "https://REDACTED:REDACTED@mcp.example.com/bridge",
       websiteUrl: "https://REDACTED:REDACTED@anthropic.example.com/",
       hasUpstreamBillingAccessToken: true,
+      hasUpstreamBillingRefreshToken: true,
       hasUpstreamBillingCookie: true,
       upstreamBillingUserId: "42",
     });
     expect(firstProvider).not.toHaveProperty("upstreamBillingAccessToken");
+    expect(firstProvider).not.toHaveProperty("upstreamBillingRefreshToken");
     expect(firstProvider).not.toHaveProperty("upstreamBillingCookie");
     expect(JSON.stringify(list.json)).not.toContain("upstream-secret");
     expect(JSON.stringify(list.json)).not.toContain("proxy-pass");
@@ -529,6 +532,24 @@ describe("v1 providers read endpoints", () => {
         "CF-AIG-Authorization": "Bearer upstream-secret",
         "x-trace-id": "trace-updated",
       },
+    });
+  });
+
+  test("accepts explicit null to clear upstream account tokens", async () => {
+    const patched = await callV1Route({
+      method: "PATCH",
+      pathname: "/api/v1/providers/1",
+      headers: { Authorization: "Bearer admin-token" },
+      body: {
+        upstream_billing_access_token: null,
+        upstream_billing_refresh_token: null,
+      },
+    });
+
+    expect(patched.response.status).toBe(200);
+    expect(editProviderMock).toHaveBeenCalledWith(1, {
+      upstream_billing_access_token: null,
+      upstream_billing_refresh_token: null,
     });
   });
 

@@ -59,10 +59,13 @@ export interface ProviderUpstreamBillingConfig {
   customHeaders: Record<string, string> | null;
   upstreamBillingType: ProviderUpstreamBillingType;
   upstreamBillingAccessToken: string | null;
+  upstreamBillingRefreshToken: string | null;
   upstreamBillingCookie: string | null;
   upstreamBillingUserId: string | null;
-  /** New-API 账户下需要解析 Token 绑定组的全部启用 Key。 */
+  /** New-API 账户下需要解析 Token 绑定组的启用 Key。 */
   providerKeys?: Array<{ id: number | null; key: string; label: string | null }>;
+  /** sub2api 刷新令牌轮换后立即持久化；凭据不会进入探测结果。 */
+  persistSub2ApiTokens?: (accessToken: string, refreshToken: string) => Promise<void>;
 }
 
 interface UndiciFetchOptions extends RequestInit {
@@ -141,7 +144,8 @@ async function fetchJson(
   url: string,
   fetchImpl: FetchImplementation,
   headerOverrides?: HeadersInit,
-  includeProviderAuthorization = true
+  includeProviderAuthorization = true,
+  requestInit?: Pick<RequestInit, "method" | "body">
 ): Promise<JsonResponse> {
   const proxyConfig: ProviderProxyConfig = {
     id: config.id,
@@ -155,8 +159,9 @@ async function fetchJson(
     new Headers(headerOverrides).forEach((value, key) => headers.set(key, value));
   }
   const init: UndiciFetchOptions = {
-    method: "GET",
+    method: requestInit?.method ?? "GET",
     headers,
+    ...(requestInit?.body !== undefined ? { body: requestInit.body } : {}),
     signal: AbortSignal.timeout(UPSTREAM_BILLING_TIMEOUT_MS),
     cache: "no-store",
   };
@@ -208,6 +213,224 @@ function extractSub2ApiUsageBalance(
   return balance === null ? null : { balanceUsd: balance, balanceScope: "account" };
 }
 
+interface Sub2ApiAccountResponse {
+  result: JsonResponse | null;
+  errorCode: string | null;
+}
+
+function sub2ApiResponseData(body: unknown): unknown {
+  const root = objectValue(body);
+  return finiteNumber(root?.code) === 0 ? root?.data : null;
+}
+
+function createSub2ApiAccountFetcher(
+  config: ProviderUpstreamBillingConfig,
+  baseUrl: string,
+  fetchImpl: FetchImplementation
+): (path: string) => Promise<Sub2ApiAccountResponse> {
+  let accessToken = config.upstreamBillingAccessToken?.trim() ?? "";
+  let refreshToken = config.upstreamBillingRefreshToken?.trim() ?? "";
+  let refreshAttempted = false;
+
+  const refreshAccessToken = async (): Promise<string | null> => {
+    if (!refreshToken || refreshAttempted) return "sub2api_auth_token_invalid";
+    refreshAttempted = true;
+    const refreshed = await fetchJson(
+      config,
+      `${baseUrl}/api/v1/auth/refresh`,
+      fetchImpl,
+      { "content-type": "application/json" },
+      false,
+      { method: "POST", body: JSON.stringify({ refresh_token: refreshToken }) }
+    );
+    if (!refreshed.response.ok) {
+      return refreshed.response.status === 401 || refreshed.response.status === 403
+        ? "sub2api_refresh_token_invalid"
+        : `sub2api_refresh_http_${refreshed.response.status}`;
+    }
+
+    const data = objectValue(sub2ApiResponseData(refreshed.body));
+    const nextAccessToken = typeof data?.access_token === "string" ? data.access_token.trim() : "";
+    const nextRefreshToken =
+      typeof data?.refresh_token === "string" ? data.refresh_token.trim() : "";
+    if (!nextAccessToken || !nextRefreshToken) return "invalid_sub2api_refresh_response";
+
+    try {
+      await config.persistSub2ApiTokens?.(nextAccessToken, nextRefreshToken);
+    } catch {
+      return "sub2api_token_persist_failed";
+    }
+    accessToken = nextAccessToken;
+    refreshToken = nextRefreshToken;
+    return null;
+  };
+
+  return async (path: string): Promise<Sub2ApiAccountResponse> => {
+    if (!accessToken) {
+      const refreshError = await refreshAccessToken();
+      if (refreshError) return { result: null, errorCode: refreshError };
+    }
+
+    const request = () =>
+      fetchJson(
+        config,
+        `${baseUrl}${path}`,
+        fetchImpl,
+        { authorization: `Bearer ${accessToken}` },
+        false
+      );
+    let result = await request();
+    if (result.response.status === 401) {
+      const refreshError = await refreshAccessToken();
+      if (refreshError) return { result: null, errorCode: refreshError };
+      result = await request();
+    }
+    if (result.response.status === 401 || result.response.status === 403) {
+      return { result, errorCode: "sub2api_auth_token_invalid" };
+    }
+    return { result, errorCode: null };
+  };
+}
+
+function parseClockMinutes(value: unknown): number | null {
+  if (typeof value !== "string") return null;
+  const match = /^(\d{2}):(\d{2})$/.exec(value);
+  if (!match) return null;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  return hour >= 0 && hour < 24 && minute >= 0 && minute < 60 ? hour * 60 + minute : null;
+}
+
+function currentMinutesInTimeZone(timeZone: string): number | null {
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    }).formatToParts(new Date());
+    const hour = Number(parts.find((part) => part.type === "hour")?.value);
+    const minute = Number(parts.find((part) => part.type === "minute")?.value);
+    return Number.isInteger(hour) && Number.isInteger(minute) ? hour * 60 + minute : null;
+  } catch {
+    return null;
+  }
+}
+
+async function resolveLegacySub2ApiMultiplier(
+  config: ProviderUpstreamBillingConfig,
+  baseUrl: string,
+  fetchImpl: FetchImplementation
+): Promise<{ effectiveMultiplier: number | null; errorCode: string | null }> {
+  if (!config.upstreamBillingAccessToken?.trim() && !config.upstreamBillingRefreshToken?.trim()) {
+    return { effectiveMultiplier: null, errorCode: "sub2api_account_credentials_missing" };
+  }
+
+  const accountFetch = createSub2ApiAccountFetcher(config, baseUrl, fetchImpl);
+  let matchedKey: Record<string, unknown> | null = null;
+  for (let page = 1; page <= 10 && !matchedKey; page++) {
+    const keys = await accountFetch(`/api/v1/keys?page=${page}&page_size=100`);
+    if (keys.errorCode) return { effectiveMultiplier: null, errorCode: keys.errorCode };
+    if (!keys.result?.response.ok) {
+      return {
+        effectiveMultiplier: null,
+        errorCode: `sub2api_keys_http_${keys.result?.response.status ?? 0}`,
+      };
+    }
+    const pageData = objectValue(sub2ApiResponseData(keys.result.body));
+    const items = Array.isArray(pageData?.items) ? pageData.items : null;
+    if (!items) return { effectiveMultiplier: null, errorCode: "invalid_sub2api_keys_response" };
+    matchedKey =
+      items
+        .map(objectValue)
+        .find((item): item is Record<string, unknown> => item?.key === config.key) ?? null;
+    const total = finiteNumber(pageData?.total) ?? 0;
+    if (page * 100 >= total) break;
+  }
+  if (!matchedKey) return { effectiveMultiplier: null, errorCode: "sub2api_key_not_found" };
+
+  const apiKeyId = finiteNumber(matchedKey.id);
+  const groupId = finiteNumber(matchedKey.group_id);
+  if (apiKeyId === null || groupId === null) {
+    return { effectiveMultiplier: null, errorCode: "sub2api_key_group_missing" };
+  }
+
+  // 顺序读取可避免过期 JWT 触发并发刷新，导致一次性 Refresh Token 被重复消费。
+  const groups = await accountFetch("/api/v1/groups/available");
+  const rates = await accountFetch("/api/v1/groups/rates");
+  const latestUsage = await accountFetch(
+    `/api/v1/usage?api_key_id=${apiKeyId}&page=1&page_size=1&sort_by=created_at&sort_order=desc`
+  );
+  for (const response of [groups, rates, latestUsage]) {
+    if (response.errorCode) {
+      return { effectiveMultiplier: null, errorCode: response.errorCode };
+    }
+  }
+
+  if (!groups.result?.response.ok) {
+    return {
+      effectiveMultiplier: null,
+      errorCode: `sub2api_groups_http_${groups.result?.response.status ?? 0}`,
+    };
+  }
+  const groupItems = sub2ApiResponseData(groups.result.body);
+  const group = Array.isArray(groupItems)
+    ? groupItems
+        .map(objectValue)
+        .find((item): item is Record<string, unknown> => finiteNumber(item?.id) === groupId)
+    : null;
+  if (!group) return { effectiveMultiplier: null, errorCode: "sub2api_group_not_found" };
+
+  const groupMultiplier = finiteNumber(group.rate_multiplier);
+  if (groupMultiplier === null || groupMultiplier < 0) {
+    return { effectiveMultiplier: null, errorCode: "invalid_multiplier" };
+  }
+  let effectiveMultiplier = groupMultiplier;
+
+  if (rates.result?.response.ok) {
+    const rateMap = objectValue(sub2ApiResponseData(rates.result.body));
+    const userMultiplier = finiteNumber(rateMap?.[String(groupId)]);
+    if (userMultiplier !== null && userMultiplier >= 0) effectiveMultiplier = userMultiplier;
+  }
+
+  const usageData = objectValue(sub2ApiResponseData(latestUsage.result?.body));
+  const usageItems = Array.isArray(usageData?.items) ? usageData.items : [];
+  const latestMultiplier = finiteNumber(objectValue(usageItems[0])?.rate_multiplier);
+  if (latestMultiplier !== null && latestMultiplier >= 0) effectiveMultiplier = latestMultiplier;
+
+  if (group.peak_rate_enabled === true && latestMultiplier === null) {
+    const settings = await fetchJson(
+      config,
+      `${baseUrl}/api/v1/settings/public`,
+      fetchImpl,
+      undefined,
+      false
+    );
+    const settingsData = objectValue(sub2ApiResponseData(settings.body));
+    const timeZone =
+      typeof settingsData?.server_timezone === "string" ? settingsData.server_timezone : "";
+    const nowMinutes = currentMinutesInTimeZone(timeZone);
+    const startMinutes = parseClockMinutes(group.peak_start);
+    const endMinutes = parseClockMinutes(group.peak_end);
+    const peakMultiplier = finiteNumber(group.peak_rate_multiplier);
+    if (
+      nowMinutes === null ||
+      startMinutes === null ||
+      endMinutes === null ||
+      startMinutes >= endMinutes ||
+      peakMultiplier === null ||
+      peakMultiplier < 0
+    ) {
+      return { effectiveMultiplier: null, errorCode: "sub2api_peak_multiplier_dynamic" };
+    }
+    if (nowMinutes >= startMinutes && nowMinutes < endMinutes) {
+      effectiveMultiplier *= peakMultiplier;
+    }
+  }
+
+  return { effectiveMultiplier, errorCode: null };
+}
+
 async function probeSub2Api(
   config: ProviderUpstreamBillingConfig,
   baseUrl: string,
@@ -218,82 +441,66 @@ async function probeSub2Api(
 
   const payload = objectValue(body);
   const isSub2Api = payload?.object === "sub2api.key_billing";
-  if (!isSub2Api) {
-    if (!strict) return null;
-    return {
-      ...resultBase(config.id),
-      source: "sub2api",
-      status: response.status === 404 || response.status === 405 ? "unsupported" : "error",
-      effectiveMultiplier: null,
-      errorCode:
-        response.status === 404 || response.status === 405
-          ? "unsupported_upstream"
-          : response.ok
-            ? "invalid_sub2api_response"
-            : `upstream_http_${response.status}`,
-    };
-  }
-
-  if (!response.ok) {
-    return {
-      ...resultBase(config.id),
-      source: "sub2api",
-      status: "error",
-      effectiveMultiplier: null,
-      errorCode: `upstream_http_${response.status}`,
-    };
-  }
-
-  if (!payload || !isSub2Api) return null;
-  const effectiveMultiplier = finiteNumber(payload.effective_rate_multiplier);
-  if (effectiveMultiplier === null || effectiveMultiplier < 0) {
-    return {
-      ...resultBase(config.id),
-      source: "sub2api",
-      status: "error",
-      effectiveMultiplier: null,
-      errorCode: "invalid_multiplier",
-    };
-  }
+  const directMultiplier =
+    response.ok && isSub2Api ? finiteNumber(payload.effective_rate_multiplier) : null;
 
   const usage = await fetchJson(config, `${baseUrl}/v1/usage`, fetchImpl);
-  if (!usage.response.ok) {
-    return {
-      ...resultBase(config.id),
-      source: "sub2api",
-      status: "partial",
-      effectiveMultiplier,
-      observedAt:
-        typeof payload.observed_at === "string" ? payload.observed_at : new Date().toISOString(),
-      errorCode: `balance_upstream_http_${usage.response.status}`,
-    };
-  }
-
   const usagePayload = objectValue(usage.body);
-  const balance = usagePayload ? extractSub2ApiUsageBalance(usagePayload) : null;
+  const balance =
+    usage.response.ok && usagePayload ? extractSub2ApiUsageBalance(usagePayload) : null;
   if (balance && balance.balanceUsd < 0) {
     return {
       ...resultBase(config.id),
       source: "sub2api",
       status: "partial",
-      effectiveMultiplier,
+      effectiveMultiplier: directMultiplier,
       observedAt:
-        typeof payload.observed_at === "string" ? payload.observed_at : new Date().toISOString(),
+        typeof payload?.observed_at === "string" ? payload.observed_at : new Date().toISOString(),
       errorCode: "invalid_balance",
     };
   }
 
+  const fallbackMultiplier =
+    directMultiplier === null
+      ? await resolveLegacySub2ApiMultiplier(config, baseUrl, fetchImpl)
+      : { effectiveMultiplier: directMultiplier, errorCode: null };
+  const effectiveMultiplier = fallbackMultiplier.effectiveMultiplier;
+  const recognized = isSub2Api || balance !== null || effectiveMultiplier !== null;
+  if (!recognized && !strict) return null;
+
+  const status =
+    balance !== null && effectiveMultiplier !== null
+      ? "ok"
+      : recognized
+        ? "partial"
+        : response.status === 404 || response.status === 405
+          ? "unsupported"
+          : "error";
+  const errorCode =
+    status === "ok"
+      ? null
+      : (fallbackMultiplier.errorCode ??
+        (balance === null
+          ? usage.response.ok
+            ? "balance_unavailable"
+            : `balance_upstream_http_${usage.response.status}`
+          : response.status === 404 || response.status === 405
+            ? "unsupported_upstream_multiplier"
+            : response.ok
+              ? "invalid_sub2api_response"
+              : `upstream_http_${response.status}`));
+
   return {
     ...resultBase(config.id),
     source: "sub2api",
-    status: balance ? "ok" : "partial",
+    status,
     balanceUsd: balance?.balanceUsd ?? null,
     balanceRaw: balance?.balanceUsd ?? null,
     balanceScope: balance?.balanceScope ?? null,
     effectiveMultiplier,
     observedAt:
-      typeof payload.observed_at === "string" ? payload.observed_at : new Date().toISOString(),
-    errorCode: balance ? null : "balance_unavailable",
+      typeof payload?.observed_at === "string" ? payload.observed_at : new Date().toISOString(),
+    errorCode,
   };
 }
 
@@ -304,6 +511,18 @@ interface NewApiMaskedToken {
 
 const NEW_API_TOKEN_PAGE_SIZE = 100;
 const NEW_API_TOKEN_MAX_PAGES = 10;
+
+function getNewApiCredentialErrorCode(response: Response, usesCookie: boolean): string | null {
+  const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+  const authenticationRejected =
+    response.status === 401 ||
+    response.status === 403 ||
+    response.redirected ||
+    contentType.includes("text/html");
+
+  if (!authenticationRejected) return null;
+  return usesCookie ? "new_api_cookie_invalid" : "new_api_access_token_invalid";
+}
 
 function maskNewApiTokenKey(value: string): string {
   const key = value.startsWith("sk-") ? value.slice(3) : value;
@@ -316,7 +535,8 @@ async function fetchNewApiTokens(
   config: ProviderUpstreamBillingConfig,
   baseUrl: string,
   fetchImpl: FetchImplementation,
-  accountHeaders: HeadersInit
+  accountHeaders: HeadersInit,
+  usesCookie: boolean
 ): Promise<{ tokens: NewApiMaskedToken[]; errorCode: string | null }> {
   const tokens: NewApiMaskedToken[] = [];
 
@@ -328,6 +548,10 @@ async function fetchNewApiTokens(
       accountHeaders,
       false
     );
+    const credentialErrorCode = getNewApiCredentialErrorCode(result.response, usesCookie);
+    if (credentialErrorCode) {
+      return { tokens: [], errorCode: credentialErrorCode };
+    }
     if (!result.response.ok) {
       return {
         tokens: [],
@@ -450,6 +674,16 @@ async function probeNewApi(
       errorCode: "unsupported_upstream",
     };
   }
+  const credentialErrorCode = getNewApiCredentialErrorCode(account.response, Boolean(cookie));
+  if (credentialErrorCode) {
+    return {
+      ...resultBase(config.id),
+      source: "new-api",
+      status: "error",
+      effectiveMultiplier: null,
+      errorCode: credentialErrorCode,
+    };
+  }
   if (!account.response.ok) {
     return {
       ...resultBase(config.id),
@@ -490,6 +724,18 @@ async function probeNewApi(
     accountHeaders,
     false
   );
+  const groupsCredentialErrorCode = getNewApiCredentialErrorCode(
+    groupsResponse.response,
+    Boolean(cookie)
+  );
+  if (groupsCredentialErrorCode) {
+    return {
+      ...balanceResult,
+      status: "error",
+      effectiveMultiplier: null,
+      errorCode: groupsCredentialErrorCode,
+    };
+  }
   if (!groupsResponse.response.ok) {
     return {
       ...balanceResult,
@@ -510,11 +756,21 @@ async function probeNewApi(
     };
   }
 
-  const tokenResult = await fetchNewApiTokens(config, baseUrl, fetchImpl, accountHeaders);
+  const tokenResult = await fetchNewApiTokens(
+    config,
+    baseUrl,
+    fetchImpl,
+    accountHeaders,
+    Boolean(cookie)
+  );
   if (tokenResult.errorCode) {
     return {
       ...balanceResult,
-      status: "partial",
+      status:
+        tokenResult.errorCode === "new_api_cookie_invalid" ||
+        tokenResult.errorCode === "new_api_access_token_invalid"
+          ? "error"
+          : "partial",
       effectiveMultiplier: null,
       errorCode: tokenResult.errorCode,
     };
@@ -548,6 +804,15 @@ export async function probeProviderUpstreamBilling(
     keyId: config.keyId ?? null,
     keyLabel: config.keyLabel ?? null,
   });
+  if (config.upstreamBillingType === "official") {
+    return withKeyMetadata({
+      ...resultBase(config.id),
+      source: null,
+      status: "unsupported",
+      effectiveMultiplier: null,
+      errorCode: "official_billing_disabled",
+    });
+  }
   let baseUrl: string;
   try {
     baseUrl = resolveProviderBillingBaseUrl(config.url);

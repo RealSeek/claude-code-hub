@@ -215,6 +215,7 @@ export const providers = pgTable('providers', {
     .default('auto')
     .$type<ProviderUpstreamBillingType>(),
   upstreamBillingAccessToken: varchar('upstream_billing_access_token'),
+  upstreamBillingRefreshToken: varchar('upstream_billing_refresh_token'),
   upstreamBillingCookie: varchar('upstream_billing_cookie'),
   upstreamBillingUserId: varchar('upstream_billing_user_id', { length: 128 }),
   // 请求成功后最多每 10 分钟刷新一次；该字段控制定时兜底，0 表示关闭定时刷新。

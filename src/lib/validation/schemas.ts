@@ -529,8 +529,18 @@ export const CreateProviderSchema = z
       .default(null),
     cost_multiplier: z.coerce.number().min(0, "成本倍率不能为负数").optional().default(1.0),
     group_tag: z.string().max(255, "分组标签不能超过255个字符").nullable().optional(),
-    upstream_billing_type: z.enum(["auto", "new-api", "sub2api"]).optional().default("auto"),
+    upstream_billing_type: z
+      .enum(["auto", "new-api", "sub2api", "official"])
+      .optional()
+      .default("auto"),
     upstream_billing_access_token: z
+      .string()
+      .trim()
+      .min(1)
+      .max(1024 * 1024)
+      .nullable()
+      .optional(),
+    upstream_billing_refresh_token: z
       .string()
       .trim()
       .min(1)
@@ -810,8 +820,15 @@ export const UpdateProviderSchema = z
       .optional(),
     cost_multiplier: z.coerce.number().min(0, "成本倍率不能为负数").optional(),
     group_tag: z.string().max(255, "分组标签不能超过255个字符").nullable().optional(),
-    upstream_billing_type: z.enum(["auto", "new-api", "sub2api"]).optional(),
+    upstream_billing_type: z.enum(["auto", "new-api", "sub2api", "official"]).optional(),
     upstream_billing_access_token: z
+      .string()
+      .trim()
+      .min(1)
+      .max(1024 * 1024)
+      .nullable()
+      .optional(),
+    upstream_billing_refresh_token: z
       .string()
       .trim()
       .min(1)

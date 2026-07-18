@@ -107,6 +107,7 @@ export function toProvider(dbProvider: any): Provider {
     groupTag: dbProvider?.groupTag ?? null,
     upstreamBillingType: dbProvider?.upstreamBillingType ?? "auto",
     upstreamBillingAccessToken: dbProvider?.upstreamBillingAccessToken ?? null,
+    upstreamBillingRefreshToken: dbProvider?.upstreamBillingRefreshToken ?? null,
     upstreamBillingCookie: dbProvider?.upstreamBillingCookie ?? null,
     upstreamBillingUserId: dbProvider?.upstreamBillingUserId ?? null,
     upstreamBillingRefreshIntervalMinutes: dbProvider?.upstreamBillingRefreshIntervalMinutes ?? 30,

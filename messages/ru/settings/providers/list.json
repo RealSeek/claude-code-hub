@@ -12,6 +12,8 @@
   "upstreamBalanceUnavailable": "Баланс недоступен",
   "upstreamBillingError": "Ошибка запроса",
   "upstreamBillingCredentialsMissing": "Сначала настройте учетные данные аккаунта New-API",
+  "upstreamBillingCookieInvalid": "Cookie New-API истек или аутентификация отклонена; обновите Cookie и проверьте ID пользователя",
+  "upstreamBillingAccessTokenInvalid": "Access Token New-API истек или аутентификация отклонена",
   "upstreamBillingPartial": "Часть ключей не отвечает; баланс не суммируется",
   "upstreamBillingKeySum": "Сумма нескольких ключей (общие аккаунты могут задвоить баланс)",
   "deleteButton": "Удалить",

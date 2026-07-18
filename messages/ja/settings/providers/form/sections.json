@@ -22,7 +22,8 @@
       "options": {
         "auto": "自動検出",
         "newApi": "New-API（アカウント残高と Token グループ倍率）",
-        "sub2api": "sub2api（残高と倍率）"
+        "sub2api": "sub2api（残高と倍率）",
+        "official": "公式チャネル（残高・倍率を取得しない）"
       }
     },
     "upstreamBillingRefreshInterval": {
@@ -43,7 +44,33 @@
         "placeholder": "完全な Session Cookie を入力",
         "leaveEmpty": "空欄の場合は現在の Cookie を保持",
         "show": "Session Cookie を表示",
-        "hide": "Session Cookie を非表示"
+        "hide": "Session Cookie を非表示",
+        "invalidWarning": "最新の残高・倍率同期で New-API Cookie の有効期限切れまたは認証拒否が検出されました。新しい Cookie を入力し、ユーザー ID を確認してください。"
+      },
+      "accessTokenInvalidWarning": "最新の残高・倍率同期で New-API Access Token の有効期限切れまたは認証拒否が検出されました。有効な Session Cookie を使用し、ユーザー ID を確認してください。"
+    },
+    "sub2apiAccount": {
+      "authToken": {
+        "label": "sub2api Auth Token（任意）",
+        "desc": "新しい課金 API が利用できない場合に、対象 Key のグループ倍率を取得します",
+        "configured": "Auth Token は設定済みです。空欄の場合は現在の値を保持します",
+        "placeholder": "auth_token を入力",
+        "leaveEmpty": "空欄で現在の Auth Token を保持",
+        "clear": "設定済みの Auth Token を削除",
+        "cleared": "保存時に現在の Auth Token を削除します。新しい値を入力すると置き換えられます",
+        "show": "Auth Token を表示",
+        "hide": "Auth Token を隠す"
+      },
+      "refreshToken": {
+        "label": "sub2api Refresh Token（任意）",
+        "desc": "期限切れの Auth Token を自動更新し、ローテーション後のトークンを保存します",
+        "configured": "Refresh Token は設定済みです。空欄の場合は現在の値を保持します",
+        "placeholder": "refresh_token を入力",
+        "leaveEmpty": "空欄で現在の Refresh Token を保持",
+        "clear": "設定済みの Refresh Token を削除",
+        "cleared": "保存時に現在の Refresh Token を削除します。新しい値を入力すると置き換えられます",
+        "show": "Refresh Token を表示",
+        "hide": "Refresh Token を隠す"
       }
     }
   },

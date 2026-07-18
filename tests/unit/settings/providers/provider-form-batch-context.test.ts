@@ -142,36 +142,55 @@ describe("createInitialState - batch mode", () => {
   });
 });
 
-describe("createInitialState - New-API 账户凭据", () => {
-  it("编辑时回填用户 ID 但绝不回填 Session Cookie", () => {
+describe("createInitialState - 上游账户凭据", () => {
+  it("编辑时回填用户 ID 但绝不回填任何账户令牌", () => {
     const state = createInitialState("edit", {
       id: 7,
       name: "New-API",
       url: "https://gateway.example.com",
       upstreamBillingType: "new-api",
       hasUpstreamBillingAccessToken: true,
+      hasUpstreamBillingRefreshToken: true,
       hasUpstreamBillingCookie: true,
       upstreamBillingUserId: "42",
     } as Parameters<typeof createInitialState>[1]);
 
     expect(state.basic.upstreamBillingType).toBe("new-api");
     expect(state.basic.upstreamBillingUserId).toBe("42");
+    expect(state.basic.upstreamBillingAccessToken).toBe("");
+    expect(state.basic.upstreamBillingRefreshToken).toBe("");
     expect(state.basic.upstreamBillingCookie).toBe("");
   });
 
-  it("reducer 可以分别更新 Session Cookie 和用户 ID", () => {
+  it("reducer 可以分别更新 sub2api 令牌、Session Cookie 和用户 ID", () => {
     const initial = createInitialState("create");
-    const withToken = providerFormReducer(initial, {
+    const withAccessToken = providerFormReducer(initial, {
+      type: "SET_UPSTREAM_BILLING_ACCESS_TOKEN",
+      payload: "access-test",
+    });
+    const withRefreshToken = providerFormReducer(withAccessToken, {
+      type: "SET_UPSTREAM_BILLING_REFRESH_TOKEN",
+      payload: "refresh-test",
+    });
+    const withCookie = providerFormReducer(withRefreshToken, {
       type: "SET_UPSTREAM_BILLING_COOKIE",
       payload: "session=test-cookie",
     });
-    const withUserId = providerFormReducer(withToken, {
+    const withUserId = providerFormReducer(withCookie, {
       type: "SET_UPSTREAM_BILLING_USER_ID",
       payload: "42",
     });
 
+    expect(withUserId.basic.upstreamBillingAccessToken).toBe("access-test");
+    expect(withUserId.basic.upstreamBillingRefreshToken).toBe("refresh-test");
     expect(withUserId.basic.upstreamBillingCookie).toBe("session=test-cookie");
     expect(withUserId.basic.upstreamBillingUserId).toBe("42");
+
+    const cleared = providerFormReducer(withUserId, {
+      type: "SET_UPSTREAM_BILLING_REFRESH_TOKEN",
+      payload: null,
+    });
+    expect(cleared.basic.upstreamBillingRefreshToken).toBeNull();
   });
 
   it("主动更新间隔默认 30 分钟并可设置为 0", () => {

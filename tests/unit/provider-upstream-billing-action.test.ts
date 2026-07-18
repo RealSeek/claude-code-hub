@@ -5,6 +5,7 @@ const {
   mockFindProviderById,
   mockClaimRefresh,
   mockUpdateSnapshot,
+  mockUpdateTokens,
   mockProbe,
   mockPublishInvalidation,
   mockClearConfigCache,
@@ -13,6 +14,7 @@ const {
   mockFindProviderById: vi.fn(),
   mockClaimRefresh: vi.fn(),
   mockUpdateSnapshot: vi.fn(),
+  mockUpdateTokens: vi.fn(),
   mockProbe: vi.fn(),
   mockPublishInvalidation: vi.fn(),
   mockClearConfigCache: vi.fn(),
@@ -23,6 +25,7 @@ vi.mock("@/repository/provider", () => ({
   claimProviderUpstreamBillingRefresh: mockClaimRefresh,
   findProviderById: mockFindProviderById,
   updateProviderUpstreamBillingSnapshot: mockUpdateSnapshot,
+  updateProviderUpstreamBillingTokens: mockUpdateTokens,
 }));
 vi.mock("@/lib/provider-upstream-billing", () => ({
   probeProviderUpstreamBilling: mockProbe,
@@ -50,6 +53,7 @@ const provider = {
   customHeaders: null,
   apiKeys: [],
   upstreamBillingAccessToken: null,
+  upstreamBillingRefreshToken: null,
   upstreamBillingCookie: null,
   upstreamBillingUserId: null,
   upstreamBillingRefreshIntervalMinutes: 30,
@@ -77,6 +81,7 @@ describe("provider upstream billing actions", () => {
     mockFindProviderById.mockResolvedValue(provider);
     mockClaimRefresh.mockResolvedValue(true);
     mockUpdateSnapshot.mockResolvedValue(true);
+    mockUpdateTokens.mockResolvedValue(true);
     mockProbe.mockResolvedValue(billing);
     mockPublishInvalidation.mockResolvedValue(undefined);
   });
@@ -84,7 +89,10 @@ describe("provider upstream billing actions", () => {
   it("批量查询会去重渠道编号", async () => {
     const result = await getProviderUpstreamBillingBatch([7, 7]);
 
-    expect(result).toEqual({ ok: true, data: [billing] });
+    expect(result).toMatchObject({
+      ok: true,
+      data: [{ ...billing, balanceAggregation: "unavailable", successfulKeyCount: 1 }],
+    });
     expect(mockFindProviderById).toHaveBeenCalledTimes(1);
     expect(mockProbe).toHaveBeenCalledTimes(1);
     expect(mockProbe).toHaveBeenCalledWith(
@@ -99,26 +107,58 @@ describe("provider upstream billing actions", () => {
       ok: true,
       data: { previousMultiplier: 1, synced: true, effectiveMultiplier: 0.75 },
     });
-    expect(mockUpdateSnapshot).toHaveBeenCalledWith(7, billing, 0.75);
+    expect(mockUpdateSnapshot).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({
+        ...billing,
+        balanceAggregation: "unavailable",
+        successfulKeyCount: 1,
+      }),
+      0.75
+    );
     expect(mockClearConfigCache).toHaveBeenCalledWith(7);
     expect(mockPublishInvalidation).toHaveBeenCalledOnce();
   });
 
-  it("批量探测会分别请求每个启用 Key 并汇总余额", async () => {
+  it("sub2api 轮换令牌通过独立仓库路径持久化", async () => {
+    mockProbe.mockImplementation(
+      async (config: {
+        persistSub2ApiTokens?: (accessToken: string, refreshToken: string) => Promise<void>;
+      }) => {
+        await config.persistSub2ApiTokens?.("access-new", "refresh-new");
+        return billing;
+      }
+    );
+
+    const result = await getProviderUpstreamBillingBatch([7]);
+
+    expect(result).toMatchObject({ ok: true, data: [billing] });
+    expect(mockUpdateTokens).toHaveBeenCalledWith(7, "access-new", "refresh-new");
+    expect(mockUpdateSnapshot).toHaveBeenCalledWith(
+      7,
+      expect.not.objectContaining({
+        upstreamBillingAccessToken: expect.anything(),
+        upstreamBillingRefreshToken: expect.anything(),
+      }),
+      0.75
+    );
+  });
+
+  it("多 Key 供应商只探测排序后的第一个启用 Key", async () => {
     const multiKeyProvider = {
       ...provider,
       apiKeys: [
-        { id: 11, providerId: 7, key: "key-a", label: "A", isEnabled: true, sortOrder: 0 },
-        { id: 12, providerId: 7, key: "key-b", label: "B", isEnabled: true, sortOrder: 1 },
+        { id: 11, providerId: 7, key: "key-a", label: "A", isEnabled: true, sortOrder: 10 },
+        { id: 12, providerId: 7, key: "key-b", label: "B", isEnabled: true, sortOrder: 0 },
       ],
     };
     mockFindProviderById.mockResolvedValue(multiKeyProvider);
     mockProbe.mockImplementation(async (config: { keyId: number }) => ({
       ...billing,
-      balanceUsd: config.keyId === 11 ? 1 : 2,
-      balanceRaw: config.keyId === 11 ? 100 : 200,
+      balanceUsd: 2,
+      balanceRaw: 200,
       keyId: config.keyId,
-      keyLabel: config.keyId === 11 ? "A" : "B",
+      keyLabel: "B",
     }));
 
     const result = await getProviderUpstreamBillingBatch([7]);
@@ -126,18 +166,16 @@ describe("provider upstream billing actions", () => {
       ok: true,
       data: [
         {
-          balanceUsd: 3,
-          balanceRaw: 300,
+          balanceUsd: 2,
+          balanceRaw: 200,
           effectiveMultiplier: 0.75,
-          keys: [
-            { keyId: 11, balanceUsd: 1 },
-            { keyId: 12, balanceUsd: 2 },
-          ],
+          balanceAggregation: "single_key",
+          keys: [{ keyId: 12, balanceUsd: 2 }],
         },
       ],
     });
-    expect(mockProbe).toHaveBeenCalledTimes(2);
-    expect(mockProbe.mock.calls.map(([config]) => config.key)).toEqual(["key-a", "key-b"]);
+    expect(mockProbe).toHaveBeenCalledOnce();
+    expect(mockProbe).toHaveBeenCalledWith(expect.objectContaining({ key: "key-b", keyId: 12 }));
   });
 
   it("上游没有倍率时不更新渠道", async () => {
@@ -153,7 +191,7 @@ describe("provider upstream billing actions", () => {
     );
   });
 
-  it("New-API 使用账户级凭据一次探测全部 Key 并允许同步一致倍率", async () => {
+  it("New-API 使用账户级凭据且只解析首 Key 的倍率", async () => {
     const newApiProvider = {
       ...provider,
       upstreamBillingType: "new-api",
@@ -182,13 +220,10 @@ describe("provider upstream billing actions", () => {
     expect(mockProbe).toHaveBeenCalledOnce();
     expect(mockProbe).toHaveBeenCalledWith(
       expect.objectContaining({
-        keyId: null,
+        keyId: 11,
         upstreamBillingCookie: "session=test-cookie",
         upstreamBillingUserId: "42",
-        providerKeys: [
-          expect.objectContaining({ id: 11, key: "key-a" }),
-          expect.objectContaining({ id: 12, key: "key-b" }),
-        ],
+        providerKeys: [expect.objectContaining({ id: 11, key: "key-a" })],
       })
     );
 
@@ -219,7 +254,7 @@ describe("provider upstream billing actions", () => {
     );
   });
 
-  it("部分 Key 探测成功时不伪造完整余额，也不允许同步倍率", async () => {
+  it("第二个 Key 即使不可用也不会影响首 Key 探测结果", async () => {
     const multiKeyProvider = {
       ...provider,
       apiKeys: [
@@ -228,35 +263,20 @@ describe("provider upstream billing actions", () => {
       ],
     };
     mockFindProviderById.mockResolvedValue(multiKeyProvider);
-    mockProbe.mockImplementation(async (config: { keyId: number }) =>
-      config.keyId === 11
-        ? { ...billing, keyId: 11, balanceUsd: 1, balanceRaw: 100 }
-        : {
-            ...billing,
-            keyId: 12,
-            status: "error",
-            effectiveMultiplier: null,
-            errorCode: "timeout",
-          }
-    );
+    mockProbe.mockImplementation(async (config: { keyId: number }) => {
+      if (config.keyId !== 11) throw new Error("不应探测第二个 Key");
+      return { ...billing, keyId: 11, balanceUsd: 1, balanceRaw: 100 };
+    });
 
     const batch = await getProviderUpstreamBillingBatch([7]);
     expect(batch).toMatchObject({
       ok: true,
-      data: [
-        { status: "partial", balanceUsd: null, balanceRaw: null, errorCode: "partial_key_probe" },
-      ],
+      data: [{ status: "ok", balanceUsd: 1, balanceRaw: 100, balanceAggregation: "single_key" }],
     });
-    const sync = await syncProviderCostMultiplier(7);
-    expect(sync).toMatchObject({ ok: false });
-    expect(mockUpdateSnapshot).toHaveBeenCalledWith(
-      7,
-      expect.objectContaining({ status: "partial" }),
-      undefined
-    );
+    expect(mockProbe).toHaveBeenCalledOnce();
   });
 
-  it("所有 Key 探测成功但有 Key 没有余额时不汇总余额", async () => {
+  it("首 Key 部分成功时仍保留它返回的余额", async () => {
     const multiKeyProvider = {
       ...provider,
       apiKeys: [
@@ -265,17 +285,21 @@ describe("provider upstream billing actions", () => {
       ],
     };
     mockFindProviderById.mockResolvedValue(multiKeyProvider);
-    mockProbe.mockImplementation(async (config: { keyId: number }) =>
-      config.keyId === 11
-        ? { ...billing, keyId: 11, balanceUsd: 1, balanceRaw: 100 }
-        : { ...billing, keyId: 12, balanceUsd: null, balanceRaw: null }
-    );
+    mockProbe.mockResolvedValue({
+      ...billing,
+      keyId: 11,
+      status: "partial",
+      balanceUsd: 1,
+      balanceRaw: 100,
+      effectiveMultiplier: null,
+      errorCode: "sub2api_account_credentials_missing",
+    });
 
     const result = await getProviderUpstreamBillingBatch([7]);
     expect(result).toMatchObject({
       ok: true,
       data: [
-        { status: "ok", balanceUsd: null, balanceRaw: null, balanceAggregation: "unavailable" },
+        { status: "partial", balanceUsd: 1, balanceRaw: 100, balanceAggregation: "single_key" },
       ],
     });
   });
@@ -303,36 +327,16 @@ describe("provider upstream billing actions", () => {
     );
   });
 
-  it("多 Key 的账户级余额不会被重复相加", async () => {
-    const multiKeyProvider = {
-      ...provider,
-      apiKeys: [
-        { id: 11, providerId: 7, key: "key-a", label: "A", isEnabled: true, sortOrder: 0 },
-        { id: 12, providerId: 7, key: "key-b", label: "B", isEnabled: true, sortOrder: 1 },
-      ],
-    };
-    mockFindProviderById.mockResolvedValue(multiKeyProvider);
-    mockProbe.mockImplementation(async (config: { keyId: number }) => ({
-      ...billing,
-      keyId: config.keyId,
-      balanceUsd: 20,
-      balanceRaw: 20,
-      balanceScope: "account",
-    }));
+  it("官方渠道不会进入批量探测或手动倍率同步", async () => {
+    mockFindProviderById.mockResolvedValue({ ...provider, upstreamBillingType: "official" });
 
-    const result = await getProviderUpstreamBillingBatch([7]);
+    const batch = await getProviderUpstreamBillingBatch([7]);
+    const sync = await syncProviderCostMultiplier(7);
 
-    expect(result).toMatchObject({
-      ok: true,
-      data: [
-        {
-          status: "ok",
-          balanceUsd: null,
-          balanceRaw: null,
-          balanceAggregation: "unavailable",
-        },
-      ],
-    });
+    expect(batch).toEqual({ ok: true, data: [] });
+    expect(sync).toEqual({ ok: false, error: "官方渠道不查询上游余额和倍率" });
+    expect(mockClaimRefresh).not.toHaveBeenCalled();
+    expect(mockProbe).not.toHaveBeenCalled();
   });
 
   it("拒绝非管理员访问", async () => {

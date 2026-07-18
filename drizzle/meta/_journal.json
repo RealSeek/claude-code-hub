@@ -806,6 +806,13 @@
       "when": 1784387141518,
       "tag": "0114_woozy_red_wolf",
       "breakpoints": true
+    },
+    {
+      "idx": 115,
+      "version": "7",
+      "when": 1784398927776,
+      "tag": "0115_jazzy_maverick",
+      "breakpoints": true
     }
   ]
 }

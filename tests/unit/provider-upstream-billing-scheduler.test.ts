@@ -29,11 +29,13 @@ function makeProvider(
   id: number,
   refreshIntervalMinutes: number,
   lastAttemptedAt: Date | null,
-  isEnabled = true
+  isEnabled = true,
+  upstreamBillingType: "sub2api" | "official" = "sub2api"
 ) {
   return {
     id,
     isEnabled,
+    upstreamBillingType,
     upstreamBillingRefreshIntervalMinutes: refreshIntervalMinutes,
     upstreamBillingLastAttemptedAt: lastAttemptedAt,
   };
@@ -64,6 +66,7 @@ describe("provider upstream billing scheduler", () => {
       makeProvider(3, 30, new Date(now - 5 * 60_000)),
       makeProvider(4, 0, null),
       makeProvider(5, 30, null, false),
+      makeProvider(6, 30, null, true, "official"),
     ]);
 
     await runProviderUpstreamBillingRefreshCycle();

@@ -1,7 +1,17 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { ExternalLink, Eye, EyeOff, Globe, Key, Link2, User } from "lucide-react";
+import {
+  AlertTriangle,
+  ExternalLink,
+  Eye,
+  EyeOff,
+  Globe,
+  Key,
+  Link2,
+  Trash2,
+  User,
+} from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ProviderEndpointsSection } from "@/app/[locale]/settings/providers/_components/provider-endpoints-table";
@@ -16,7 +26,11 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { detectApiKeyWarnings } from "@/lib/utils/validation/api-key-warnings";
-import type { ProviderType, ProviderUpstreamBillingType } from "@/types/provider";
+import type {
+  ProviderType,
+  ProviderUpstreamBilling,
+  ProviderUpstreamBillingType,
+} from "@/types/provider";
 import { UrlPreview } from "../../url-preview";
 import { ProviderKeyPoolEditor } from "../components/provider-key-pool-editor";
 import { QuickPasteDialog } from "../components/quick-paste-dialog";
@@ -27,6 +41,7 @@ const MAX_DISPLAYED_PROVIDERS = 5;
 
 interface BasicInfoSectionProps {
   autoUrlPending?: boolean;
+  upstreamBilling?: ProviderUpstreamBilling;
   endpointPool?: {
     vendorId: number;
     providerType: ProviderType;
@@ -34,7 +49,11 @@ interface BasicInfoSectionProps {
   } | null;
 }
 
-export function BasicInfoSection({ autoUrlPending, endpointPool }: BasicInfoSectionProps) {
+export function BasicInfoSection({
+  autoUrlPending,
+  upstreamBilling,
+  endpointPool,
+}: BasicInfoSectionProps) {
   const t = useTranslations("settings.providers.form");
   const tBatch = useTranslations("settings.providers.batchEdit");
   const tProviders = useTranslations("settings.providers");
@@ -45,8 +64,16 @@ export function BasicInfoSection({ autoUrlPending, endpointPool }: BasicInfoSect
   const nameInputRef = useRef<HTMLInputElement>(null);
   const [showKey, setShowKey] = useState(false);
   const [showBillingCookie, setShowBillingCookie] = useState(false);
+  const [showBillingAccessToken, setShowBillingAccessToken] = useState(false);
+  const [showBillingRefreshToken, setShowBillingRefreshToken] = useState(false);
 
   const apiKeyWarnings = useMemo(() => detectApiKeyWarnings(state.basic.key), [state.basic.key]);
+  const upstreamCredentialWarning =
+    upstreamBilling?.errorCode === "new_api_cookie_invalid"
+      ? t("sections.basic.newApiAccount.cookie.invalidWarning")
+      : upstreamBilling?.errorCode === "new_api_access_token_invalid"
+        ? t("sections.basic.newApiAccount.accessTokenInvalidWarning")
+        : null;
 
   // Auto-focus name input (skip in batch mode)
   useEffect(() => {
@@ -272,6 +299,18 @@ export function BasicInfoSection({ autoUrlPending, endpointPool }: BasicInfoSect
         icon={Key}
       >
         <div className="space-y-4">
+          {isEdit &&
+            state.basic.upstreamBillingType !== "official" &&
+            upstreamCredentialWarning && (
+              <div
+                role="alert"
+                className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2.5 text-sm text-destructive"
+              >
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                <span>{upstreamCredentialWarning}</span>
+              </div>
+            )}
+
           <SmartInputWrapper
             label={t("sections.basic.upstreamBillingType.label")}
             description={t("sections.basic.upstreamBillingType.desc")}
@@ -299,35 +338,40 @@ export function BasicInfoSection({ autoUrlPending, endpointPool }: BasicInfoSect
                 <SelectItem value="new-api">
                   {t("sections.basic.upstreamBillingType.options.newApi")}
                 </SelectItem>
+                <SelectItem value="official">
+                  {t("sections.basic.upstreamBillingType.options.official")}
+                </SelectItem>
               </SelectContent>
             </Select>
           </SmartInputWrapper>
 
-          <SmartInputWrapper
-            label={t("sections.basic.upstreamBillingRefreshInterval.label")}
-            description={t("sections.basic.upstreamBillingRefreshInterval.desc")}
-          >
-            <Input
-              id={
-                isEdit
-                  ? "edit-upstream-billing-refresh-interval"
-                  : "upstream-billing-refresh-interval"
-              }
-              type="number"
-              min={0}
-              max={10080}
-              step={1}
-              value={state.basic.upstreamBillingRefreshIntervalMinutes}
-              onChange={(event) =>
-                dispatch({
-                  type: "SET_UPSTREAM_BILLING_REFRESH_INTERVAL_MINUTES",
-                  payload: Number.parseInt(event.target.value, 10) || 0,
-                })
-              }
-              placeholder={t("sections.basic.upstreamBillingRefreshInterval.placeholder")}
-              disabled={state.ui.isPending}
-            />
-          </SmartInputWrapper>
+          {state.basic.upstreamBillingType !== "official" && (
+            <SmartInputWrapper
+              label={t("sections.basic.upstreamBillingRefreshInterval.label")}
+              description={t("sections.basic.upstreamBillingRefreshInterval.desc")}
+            >
+              <Input
+                id={
+                  isEdit
+                    ? "edit-upstream-billing-refresh-interval"
+                    : "upstream-billing-refresh-interval"
+                }
+                type="number"
+                min={0}
+                max={10080}
+                step={1}
+                value={state.basic.upstreamBillingRefreshIntervalMinutes}
+                onChange={(event) =>
+                  dispatch({
+                    type: "SET_UPSTREAM_BILLING_REFRESH_INTERVAL_MINUTES",
+                    payload: Number.parseInt(event.target.value, 10) || 0,
+                  })
+                }
+                placeholder={t("sections.basic.upstreamBillingRefreshInterval.placeholder")}
+                disabled={state.ui.isPending}
+              />
+            </SmartInputWrapper>
+          )}
 
           {state.basic.upstreamBillingType === "new-api" && (
             <div className="grid gap-4 md:grid-cols-2">
@@ -398,6 +442,140 @@ export function BasicInfoSection({ autoUrlPending, endpointPool }: BasicInfoSect
                     }
                   >
                     {showBillingCookie ? (
+                      <EyeOff className="h-4 w-4" />
+                    ) : (
+                      <Eye className="h-4 w-4" />
+                    )}
+                  </button>
+                </div>
+              </SmartInputWrapper>
+            </div>
+          )}
+
+          {state.basic.upstreamBillingType === "sub2api" && (
+            <div className="grid gap-4 md:grid-cols-2">
+              <SmartInputWrapper
+                label={t("sections.basic.sub2apiAccount.authToken.label")}
+                description={
+                  state.basic.upstreamBillingAccessToken === null
+                    ? t("sections.basic.sub2apiAccount.authToken.cleared")
+                    : isEdit && provider?.hasUpstreamBillingAccessToken
+                      ? t("sections.basic.sub2apiAccount.authToken.configured")
+                      : t("sections.basic.sub2apiAccount.authToken.desc")
+                }
+              >
+                <div className="relative">
+                  <Input
+                    id={isEdit ? "edit-sub2api-auth-token" : "sub2api-auth-token"}
+                    type={showBillingAccessToken ? "text" : "password"}
+                    value={state.basic.upstreamBillingAccessToken ?? ""}
+                    onChange={(event) =>
+                      dispatch({
+                        type: "SET_UPSTREAM_BILLING_ACCESS_TOKEN",
+                        payload: event.target.value,
+                      })
+                    }
+                    placeholder={
+                      isEdit && provider?.hasUpstreamBillingAccessToken
+                        ? t("sections.basic.sub2apiAccount.authToken.leaveEmpty")
+                        : t("sections.basic.sub2apiAccount.authToken.placeholder")
+                    }
+                    disabled={state.ui.isPending}
+                    className="pr-20 font-mono text-sm"
+                    autoComplete="new-password"
+                    spellCheck={false}
+                  />
+                  {isEdit &&
+                    provider?.hasUpstreamBillingAccessToken &&
+                    state.basic.upstreamBillingAccessToken !== null && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          dispatch({ type: "SET_UPSTREAM_BILLING_ACCESS_TOKEN", payload: null })
+                        }
+                        className="absolute right-10 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-destructive"
+                        aria-label={t("sections.basic.sub2apiAccount.authToken.clear")}
+                        title={t("sections.basic.sub2apiAccount.authToken.clear")}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    )}
+                  <button
+                    type="button"
+                    onClick={() => setShowBillingAccessToken((visible) => !visible)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
+                    aria-label={
+                      showBillingAccessToken
+                        ? t("sections.basic.sub2apiAccount.authToken.hide")
+                        : t("sections.basic.sub2apiAccount.authToken.show")
+                    }
+                  >
+                    {showBillingAccessToken ? (
+                      <EyeOff className="h-4 w-4" />
+                    ) : (
+                      <Eye className="h-4 w-4" />
+                    )}
+                  </button>
+                </div>
+              </SmartInputWrapper>
+
+              <SmartInputWrapper
+                label={t("sections.basic.sub2apiAccount.refreshToken.label")}
+                description={
+                  state.basic.upstreamBillingRefreshToken === null
+                    ? t("sections.basic.sub2apiAccount.refreshToken.cleared")
+                    : isEdit && provider?.hasUpstreamBillingRefreshToken
+                      ? t("sections.basic.sub2apiAccount.refreshToken.configured")
+                      : t("sections.basic.sub2apiAccount.refreshToken.desc")
+                }
+              >
+                <div className="relative">
+                  <Input
+                    id={isEdit ? "edit-sub2api-refresh-token" : "sub2api-refresh-token"}
+                    type={showBillingRefreshToken ? "text" : "password"}
+                    value={state.basic.upstreamBillingRefreshToken ?? ""}
+                    onChange={(event) =>
+                      dispatch({
+                        type: "SET_UPSTREAM_BILLING_REFRESH_TOKEN",
+                        payload: event.target.value,
+                      })
+                    }
+                    placeholder={
+                      isEdit && provider?.hasUpstreamBillingRefreshToken
+                        ? t("sections.basic.sub2apiAccount.refreshToken.leaveEmpty")
+                        : t("sections.basic.sub2apiAccount.refreshToken.placeholder")
+                    }
+                    disabled={state.ui.isPending}
+                    className="pr-20 font-mono text-sm"
+                    autoComplete="new-password"
+                    spellCheck={false}
+                  />
+                  {isEdit &&
+                    provider?.hasUpstreamBillingRefreshToken &&
+                    state.basic.upstreamBillingRefreshToken !== null && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          dispatch({ type: "SET_UPSTREAM_BILLING_REFRESH_TOKEN", payload: null })
+                        }
+                        className="absolute right-10 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-destructive"
+                        aria-label={t("sections.basic.sub2apiAccount.refreshToken.clear")}
+                        title={t("sections.basic.sub2apiAccount.refreshToken.clear")}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    )}
+                  <button
+                    type="button"
+                    onClick={() => setShowBillingRefreshToken((visible) => !visible)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
+                    aria-label={
+                      showBillingRefreshToken
+                        ? t("sections.basic.sub2apiAccount.refreshToken.hide")
+                        : t("sections.basic.sub2apiAccount.refreshToken.show")
+                    }
+                  >
+                    {showBillingRefreshToken ? (
                       <EyeOff className="h-4 w-4" />
                     ) : (
                       <Eye className="h-4 w-4" />

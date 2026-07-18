@@ -12,6 +12,8 @@
   "upstreamBalanceUnavailable": "残高情報なし",
   "upstreamBillingError": "取得失敗",
   "upstreamBillingCredentialsMissing": "New-API アカウント認証情報を設定してください",
+  "upstreamBillingCookieInvalid": "New-API Cookie の有効期限切れまたは認証拒否です。Cookie を更新し、ユーザー ID を確認してください",
+  "upstreamBillingAccessTokenInvalid": "New-API Access Token の有効期限切れまたは認証拒否です",
   "upstreamBillingPartial": "一部のキーに失敗、残高は集計されません",
   "upstreamBillingKeySum": "複数キーの合計（共有アカウントでは重複の可能性）",
   "deleteButton": "削除",

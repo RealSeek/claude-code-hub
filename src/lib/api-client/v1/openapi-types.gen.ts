@@ -4436,9 +4436,11 @@ export interface operations {
                              * @description Upstream billing system used for balance and multiplier probes.
                              * @enum {string}
                              */
-                            upstreamBillingType: "auto" | "new-api" | "sub2api";
-                            /** @description Whether a write-only New-API account access token is configured. */
+                            upstreamBillingType: "auto" | "new-api" | "sub2api" | "official";
+                            /** @description Whether a write-only upstream account access token is configured. */
                             hasUpstreamBillingAccessToken: boolean;
+                            /** @description Whether a write-only sub2api account refresh token is configured. */
+                            hasUpstreamBillingRefreshToken: boolean;
                             /** @description Whether a write-only New-API session cookie is configured. */
                             hasUpstreamBillingCookie: boolean;
                             /** @description New-API account user id. */
@@ -4777,11 +4779,13 @@ export interface operations {
                      * @default auto
                      * @enum {string}
                      */
-                    upstream_billing_type?: "auto" | "new-api" | "sub2api";
-                    /** @description New-API account access token. Write-only. */
-                    upstream_billing_access_token?: string;
+                    upstream_billing_type?: "auto" | "new-api" | "sub2api" | "official";
+                    /** @description Upstream account access token. Write-only. */
+                    upstream_billing_access_token?: string | null;
+                    /** @description sub2api account refresh token. Write-only. */
+                    upstream_billing_refresh_token?: string | null;
                     /** @description New-API session cookie. Write-only. */
-                    upstream_billing_cookie?: string;
+                    upstream_billing_cookie?: string | null;
                     /** @description New-API account user id. */
                     upstream_billing_user_id?: string;
                     /**
@@ -4958,9 +4962,11 @@ export interface operations {
                          * @description Upstream billing system used for balance and multiplier probes.
                          * @enum {string}
                          */
-                        upstreamBillingType: "auto" | "new-api" | "sub2api";
-                        /** @description Whether a write-only New-API account access token is configured. */
+                        upstreamBillingType: "auto" | "new-api" | "sub2api" | "official";
+                        /** @description Whether a write-only upstream account access token is configured. */
                         hasUpstreamBillingAccessToken: boolean;
+                        /** @description Whether a write-only sub2api account refresh token is configured. */
+                        hasUpstreamBillingRefreshToken: boolean;
                         /** @description Whether a write-only New-API session cookie is configured. */
                         hasUpstreamBillingCookie: boolean;
                         /** @description New-API account user id. */
@@ -5304,9 +5310,11 @@ export interface operations {
                          * @description Upstream billing system used for balance and multiplier probes.
                          * @enum {string}
                          */
-                        upstreamBillingType: "auto" | "new-api" | "sub2api";
-                        /** @description Whether a write-only New-API account access token is configured. */
+                        upstreamBillingType: "auto" | "new-api" | "sub2api" | "official";
+                        /** @description Whether a write-only upstream account access token is configured. */
                         hasUpstreamBillingAccessToken: boolean;
+                        /** @description Whether a write-only sub2api account refresh token is configured. */
+                        hasUpstreamBillingRefreshToken: boolean;
                         /** @description Whether a write-only New-API session cookie is configured. */
                         hasUpstreamBillingCookie: boolean;
                         /** @description New-API account user id. */
@@ -5818,11 +5826,13 @@ export interface operations {
                     /** @description Provider group tag. */
                     group_tag?: string | null;
                     /** @enum {string} */
-                    upstream_billing_type?: "auto" | "new-api" | "sub2api";
-                    /** @description New-API account access token. Write-only; omit to preserve the current value. */
-                    upstream_billing_access_token?: string;
+                    upstream_billing_type?: "auto" | "new-api" | "sub2api" | "official";
+                    /** @description Upstream account access token. Write-only; omit to preserve the current value. */
+                    upstream_billing_access_token?: string | null;
+                    /** @description sub2api refresh token. Write-only; omit to preserve the current value. */
+                    upstream_billing_refresh_token?: string | null;
                     /** @description New-API session cookie. Write-only; omit to preserve the current value. */
-                    upstream_billing_cookie?: string;
+                    upstream_billing_cookie?: string | null;
                     upstream_billing_user_id?: string | null;
                     upstream_billing_refresh_interval_minutes?: number | null;
                     /** @description Per-group priority overrides. */
@@ -5999,9 +6009,11 @@ export interface operations {
                          * @description Upstream billing system used for balance and multiplier probes.
                          * @enum {string}
                          */
-                        upstreamBillingType: "auto" | "new-api" | "sub2api";
-                        /** @description Whether a write-only New-API account access token is configured. */
+                        upstreamBillingType: "auto" | "new-api" | "sub2api" | "official";
+                        /** @description Whether a write-only upstream account access token is configured. */
                         hasUpstreamBillingAccessToken: boolean;
+                        /** @description Whether a write-only sub2api account refresh token is configured. */
+                        hasUpstreamBillingRefreshToken: boolean;
                         /** @description Whether a write-only New-API session cookie is configured. */
                         hasUpstreamBillingCookie: boolean;
                         /** @description New-API account user id. */

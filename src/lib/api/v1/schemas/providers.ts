@@ -41,11 +41,14 @@ export const ProviderSummarySchema = z
     costMultiplier: z.number().describe("Provider cost multiplier."),
     groupTag: NullableStringSchema.describe("Provider group tag."),
     upstreamBillingType: z
-      .enum(["auto", "new-api", "sub2api"])
+      .enum(["auto", "new-api", "sub2api", "official"])
       .describe("Upstream billing system used for balance and multiplier probes."),
     hasUpstreamBillingAccessToken: z
       .boolean()
-      .describe("Whether a write-only New-API account access token is configured."),
+      .describe("Whether a write-only upstream account access token is configured."),
+    hasUpstreamBillingRefreshToken: z
+      .boolean()
+      .describe("Whether a write-only sub2api account refresh token is configured."),
     hasUpstreamBillingCookie: z
       .boolean()
       .describe("Whether a write-only New-API session cookie is configured."),
@@ -531,7 +534,7 @@ export const ProviderCreateSchema = z
     cost_multiplier: z.number().min(0).optional().describe("Provider cost multiplier."),
     group_tag: z.string().max(255).nullable().optional().describe("Provider group tag."),
     upstream_billing_type: z
-      .enum(["auto", "new-api", "sub2api"])
+      .enum(["auto", "new-api", "sub2api", "official"])
       .optional()
       .default("auto")
       .describe("Upstream billing system used for balance and multiplier probes."),
@@ -540,13 +543,23 @@ export const ProviderCreateSchema = z
       .trim()
       .min(1)
       .max(PROVIDER_KEY_MAX_LENGTH)
+      .nullable()
       .optional()
-      .describe("New-API account access token. Write-only."),
+      .describe("Upstream account access token. Write-only."),
+    upstream_billing_refresh_token: z
+      .string()
+      .trim()
+      .min(1)
+      .max(PROVIDER_KEY_MAX_LENGTH)
+      .nullable()
+      .optional()
+      .describe("sub2api account refresh token. Write-only."),
     upstream_billing_cookie: z
       .string()
       .trim()
       .min(1)
       .max(PROVIDER_KEY_MAX_LENGTH)
+      .nullable()
       .optional()
       .describe("New-API session cookie. Write-only."),
     upstream_billing_user_id: z
@@ -768,19 +781,29 @@ export const ProviderUpdateSchema = ProviderCreateSchema.omit({ key: true })
       .optional()
       .describe("Provider API key pool. Write-only."),
     provider_type: ProviderTypeSchema.optional(),
-    upstream_billing_type: z.enum(["auto", "new-api", "sub2api"]).optional(),
+    upstream_billing_type: z.enum(["auto", "new-api", "sub2api", "official"]).optional(),
     upstream_billing_access_token: z
       .string()
       .trim()
       .min(1)
       .max(PROVIDER_KEY_MAX_LENGTH)
+      .nullable()
       .optional()
-      .describe("New-API account access token. Write-only; omit to preserve the current value."),
+      .describe("Upstream account access token. Write-only; omit to preserve the current value."),
+    upstream_billing_refresh_token: z
+      .string()
+      .trim()
+      .min(1)
+      .max(PROVIDER_KEY_MAX_LENGTH)
+      .nullable()
+      .optional()
+      .describe("sub2api refresh token. Write-only; omit to preserve the current value."),
     upstream_billing_cookie: z
       .string()
       .trim()
       .min(1)
       .max(PROVIDER_KEY_MAX_LENGTH)
+      .nullable()
       .optional()
       .describe("New-API session cookie. Write-only; omit to preserve the current value."),
     upstream_billing_user_id: z.string().trim().min(1).max(128).nullable().optional(),

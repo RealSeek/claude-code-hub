@@ -236,6 +236,7 @@ export async function createProvider(providerData: CreateProviderData): Promise<
     groupTag: providerData.group_tag,
     upstreamBillingType: providerData.upstream_billing_type ?? "auto",
     upstreamBillingAccessToken: providerData.upstream_billing_access_token ?? null,
+    upstreamBillingRefreshToken: providerData.upstream_billing_refresh_token ?? null,
     upstreamBillingCookie: providerData.upstream_billing_cookie ?? null,
     upstreamBillingUserId: providerData.upstream_billing_user_id ?? null,
     upstreamBillingRefreshIntervalMinutes:
@@ -332,6 +333,7 @@ export async function createProvider(providerData: CreateProviderData): Promise<
         groupTag: providers.groupTag,
         upstreamBillingType: providers.upstreamBillingType,
         upstreamBillingAccessToken: providers.upstreamBillingAccessToken,
+        upstreamBillingRefreshToken: providers.upstreamBillingRefreshToken,
         upstreamBillingCookie: providers.upstreamBillingCookie,
         upstreamBillingUserId: providers.upstreamBillingUserId,
         upstreamBillingRefreshIntervalMinutes: providers.upstreamBillingRefreshIntervalMinutes,
@@ -449,6 +451,7 @@ export async function findProviderList(
       groupTag: providers.groupTag,
       upstreamBillingType: providers.upstreamBillingType,
       upstreamBillingAccessToken: providers.upstreamBillingAccessToken,
+      upstreamBillingRefreshToken: providers.upstreamBillingRefreshToken,
       upstreamBillingCookie: providers.upstreamBillingCookie,
       upstreamBillingUserId: providers.upstreamBillingUserId,
       upstreamBillingRefreshIntervalMinutes: providers.upstreamBillingRefreshIntervalMinutes,
@@ -548,6 +551,7 @@ export async function findAllProvidersFresh(): Promise<Provider[]> {
       groupTag: providers.groupTag,
       upstreamBillingType: providers.upstreamBillingType,
       upstreamBillingAccessToken: providers.upstreamBillingAccessToken,
+      upstreamBillingRefreshToken: providers.upstreamBillingRefreshToken,
       upstreamBillingCookie: providers.upstreamBillingCookie,
       upstreamBillingUserId: providers.upstreamBillingUserId,
       upstreamBillingRefreshIntervalMinutes: providers.upstreamBillingRefreshIntervalMinutes,
@@ -649,6 +653,7 @@ export async function findProviderById(id: number): Promise<Provider | null> {
       groupTag: providers.groupTag,
       upstreamBillingType: providers.upstreamBillingType,
       upstreamBillingAccessToken: providers.upstreamBillingAccessToken,
+      upstreamBillingRefreshToken: providers.upstreamBillingRefreshToken,
       upstreamBillingCookie: providers.upstreamBillingCookie,
       upstreamBillingUserId: providers.upstreamBillingUserId,
       upstreamBillingRefreshIntervalMinutes: providers.upstreamBillingRefreshIntervalMinutes,
@@ -736,6 +741,7 @@ export async function updateProvider(
     providerData.api_keys !== undefined ||
     providerData.upstream_billing_type !== undefined ||
     providerData.upstream_billing_access_token !== undefined ||
+    providerData.upstream_billing_refresh_token !== undefined ||
     providerData.upstream_billing_cookie !== undefined ||
     providerData.upstream_billing_user_id !== undefined;
   if (upstreamBillingConfigChanged) {
@@ -762,6 +768,8 @@ export async function updateProvider(
     dbData.upstreamBillingType = providerData.upstream_billing_type;
   if (providerData.upstream_billing_access_token !== undefined)
     dbData.upstreamBillingAccessToken = providerData.upstream_billing_access_token || null;
+  if (providerData.upstream_billing_refresh_token !== undefined)
+    dbData.upstreamBillingRefreshToken = providerData.upstream_billing_refresh_token || null;
   if (providerData.upstream_billing_cookie !== undefined)
     dbData.upstreamBillingCookie = providerData.upstream_billing_cookie || null;
   if (providerData.upstream_billing_user_id !== undefined)
@@ -938,6 +946,7 @@ export async function updateProvider(
         groupTag: providers.groupTag,
         upstreamBillingType: providers.upstreamBillingType,
         upstreamBillingAccessToken: providers.upstreamBillingAccessToken,
+        upstreamBillingRefreshToken: providers.upstreamBillingRefreshToken,
         upstreamBillingCookie: providers.upstreamBillingCookie,
         upstreamBillingUserId: providers.upstreamBillingUserId,
         upstreamBillingRefreshIntervalMinutes: providers.upstreamBillingRefreshIntervalMinutes,
@@ -1185,14 +1194,14 @@ export async function claimProviderUpstreamBillingRefresh(
   force = false
 ): Promise<boolean> {
   const now = new Date();
-  const dueBefore = new Date(now.getTime() - Math.max(0, minimumIntervalMs));
+  // 强制刷新只绕过业务去重周期，仍保留跨实例互斥窗口，避免轮换型 Refresh Token 被并发消费。
+  const effectiveMinimumIntervalMs = force ? 30_000 : Math.max(0, minimumIntervalMs);
+  const dueBefore = new Date(now.getTime() - effectiveMinimumIntervalMs);
   const dueCondition = or(
     isNull(providers.upstreamBillingLastAttemptedAt),
     lt(providers.upstreamBillingLastAttemptedAt, dueBefore)
   );
-  const where = force
-    ? and(eq(providers.id, providerId), isNull(providers.deletedAt))
-    : and(eq(providers.id, providerId), isNull(providers.deletedAt), dueCondition);
+  const where = and(eq(providers.id, providerId), isNull(providers.deletedAt), dueCondition);
 
   const claimed = await db
     .update(providers)
@@ -1213,6 +1222,24 @@ export async function updateProviderUpstreamBillingSnapshot(
     .set({
       upstreamBillingSnapshot: snapshot,
       ...(costMultiplier !== undefined ? { costMultiplier: costMultiplier.toString() } : {}),
+    })
+    .where(and(eq(providers.id, providerId), isNull(providers.deletedAt)))
+    .returning({ id: providers.id });
+  return updated.length > 0;
+}
+
+/** 保存 sub2api 刷新后的账户令牌。令牌不会进入计费快照或日志。 */
+export async function updateProviderUpstreamBillingTokens(
+  providerId: number,
+  accessToken: string,
+  refreshToken: string
+): Promise<boolean> {
+  const updated = await db
+    .update(providers)
+    .set({
+      upstreamBillingAccessToken: accessToken,
+      upstreamBillingRefreshToken: refreshToken,
+      updatedAt: new Date(),
     })
     .where(and(eq(providers.id, providerId), isNull(providers.deletedAt)))
     .returning({ id: providers.id });
