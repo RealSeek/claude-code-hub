@@ -138,7 +138,7 @@ describe("provider repository - createProvider transactional endpoint seeding", 
 
     expect(provider.id).toBe(101);
     expect(dbState.mocks.transactionMock).toHaveBeenCalledTimes(1);
-    expect(dbState.mocks.insertMock).toHaveBeenCalledTimes(1);
+    expect(dbState.mocks.insertMock).toHaveBeenCalledTimes(2);
 
     expect(getOrCreateProviderVendorIdFromUrlsMock).toHaveBeenCalledWith(
       expect.objectContaining({

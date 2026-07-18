@@ -45,6 +45,8 @@ function createBatchState(): ProviderFormState {
       limitMonthlyUsd: null,
       limitTotalUsd: null,
       limitConcurrentSessions: null,
+      rpm: null,
+      cc: null,
     } as ProviderFormState["rateLimit"] & {
       limit5hResetMode: "fixed" | "rolling";
     },
@@ -86,6 +88,22 @@ describe("buildPatchDraftFromFormState", () => {
     const draft = buildPatchDraftFromFormState(state, dirty);
 
     expect(draft).toEqual({});
+  });
+
+  it("includes provider RPM and concurrency limits when dirty", () => {
+    const state = createBatchState();
+    state.rateLimit.rpm = 120;
+    state.rateLimit.cc = 8;
+
+    const draft = buildPatchDraftFromFormState(
+      state,
+      new Set(["rateLimit.rpm", "rateLimit.cc"])
+    );
+
+    expect(draft).toEqual({
+      rpm_limit: { set: 120 },
+      max_concurrency: { set: 8 },
+    });
   });
 
   it("includes isEnabled=true when dirty and set to true", () => {

@@ -14,6 +14,7 @@ import type { Provider } from "@/types/provider";
 import { normalizeRoutingTrace } from "@/types/routing-trace";
 import {
   DEFAULT_FAKE_STREAMING_WHITELIST,
+  DEFAULT_SMART_DISPATCH_SETTINGS,
   type FakeStreamingWhitelistEntry,
   type ResponseFixerConfig,
   type SystemSettings,
@@ -102,6 +103,8 @@ export function toKey(dbKey: any): Key {
 export function toProvider(dbProvider: any): Provider {
   return {
     ...dbProvider,
+    keyStrategy: dbProvider?.keyStrategy ?? "round_robin",
+    apiKeys: dbProvider?.apiKeys ?? [],
     providerVendorId: dbProvider?.providerVendorId ?? null,
     isEnabled: dbProvider?.isEnabled ?? true,
     weight: dbProvider?.weight ?? 1,
@@ -109,6 +112,15 @@ export function toProvider(dbProvider: any): Provider {
     groupPriorities: dbProvider?.groupPriorities ?? null,
     costMultiplier: dbProvider?.costMultiplier ? parseFloat(dbProvider.costMultiplier) : 1.0,
     groupTag: dbProvider?.groupTag ?? null,
+    upstreamBillingType: dbProvider?.upstreamBillingType ?? "auto",
+    upstreamBillingAccessToken: dbProvider?.upstreamBillingAccessToken ?? null,
+    upstreamBillingCookie: dbProvider?.upstreamBillingCookie ?? null,
+    upstreamBillingUserId: dbProvider?.upstreamBillingUserId ?? null,
+    upstreamBillingRefreshIntervalMinutes: dbProvider?.upstreamBillingRefreshIntervalMinutes ?? 30,
+    upstreamBillingSnapshot: dbProvider?.upstreamBillingSnapshot ?? null,
+    upstreamBillingLastAttemptedAt: dbProvider?.upstreamBillingLastAttemptedAt
+      ? new Date(dbProvider.upstreamBillingLastAttemptedAt)
+      : null,
     providerType: dbProvider?.providerType ?? "claude",
     preserveClientIp: dbProvider?.preserveClientIp ?? false,
     disableSessionReuse: dbProvider?.disableSessionReuse ?? false,
@@ -299,6 +311,10 @@ export function toSystemSettings(dbSettings: any): SystemSettings {
     responseFixerConfig: {
       ...defaultResponseFixerConfig,
       ...(dbSettings?.responseFixerConfig ?? {}),
+    },
+    smartDispatchConfig: {
+      ...DEFAULT_SMART_DISPATCH_SETTINGS,
+      ...(dbSettings?.smartDispatchConfig ?? {}),
     },
     quotaDbRefreshIntervalSeconds: dbSettings?.quotaDbRefreshIntervalSeconds ?? 10,
     quotaLeasePercent5h: dbSettings?.quotaLeasePercent5h

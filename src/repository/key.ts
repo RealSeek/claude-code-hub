@@ -453,6 +453,113 @@ export async function countActiveKeysByUser(userId: number): Promise<number> {
   return Number(row?.count || 0);
 }
 
+type ProtectedKeyMutationResult =
+  | { ok: true; key: string | null }
+  | { ok: false; reason: "not_found" | "last_enabled_key" };
+
+async function lockUserKeyMutations(tx: Parameters<Parameters<typeof db.transaction>[0]>[0], userId: number) {
+  await tx.execute(sql`
+    SELECT pg_advisory_xact_lock(hashtext(${`cch:keys:user:${userId}`}))
+  `);
+}
+
+/** 在事务内保护“至少保留一个启用 Key”不变量。 */
+export async function updateKeyEnabledAtomically(
+  id: number,
+  enabled: boolean
+): Promise<ProtectedKeyMutationResult> {
+  const result = await db.transaction(async (tx) => {
+    const [current] = await tx.execute(sql`
+      SELECT "user_id" AS "userId", "is_enabled" AS "isEnabled", "key"
+      FROM "keys"
+      WHERE "id" = ${id} AND "deleted_at" IS NULL
+      FOR UPDATE
+    `) as unknown as Array<{ userId: number; isEnabled: boolean; key: string }>;
+    if (!current) return { ok: false as const, reason: "not_found" as const };
+
+    await lockUserKeyMutations(tx, current.userId);
+    const [locked] = await tx.execute(sql`
+      SELECT "user_id" AS "userId", "is_enabled" AS "isEnabled", "key"
+      FROM "keys"
+      WHERE "id" = ${id} AND "deleted_at" IS NULL
+      FOR UPDATE
+    `) as unknown as Array<{ userId: number; isEnabled: boolean; key: string }>;
+    if (!locked) return { ok: false as const, reason: "not_found" as const };
+
+    if (!enabled && locked.isEnabled) {
+      const [countRow] = await tx.execute(sql`
+        SELECT count(*)::int AS "count"
+        FROM "keys"
+        WHERE "user_id" = ${locked.userId}
+          AND "is_enabled" = true
+          AND "deleted_at" IS NULL
+      `) as unknown as Array<{ count: number }>;
+      if (Number(countRow?.count ?? 0) <= 1) {
+        return { ok: false as const, reason: "last_enabled_key" as const };
+      }
+    }
+
+    await tx.execute(sql`
+      UPDATE "keys"
+      SET "is_enabled" = ${enabled}, "updated_at" = now()
+      WHERE "id" = ${id} AND "deleted_at" IS NULL
+    `);
+    return { ok: true as const, key: locked.key };
+  });
+
+  if (result.ok && result.key) {
+    await invalidateCachedKey(result.key).catch(() => {});
+  }
+  return result;
+}
+
+/** 在事务内删除 Key，并原子保护最后一个启用 Key。 */
+export async function deleteKeyAtomically(id: number): Promise<ProtectedKeyMutationResult> {
+  const result = await db.transaction(async (tx) => {
+    const [current] = await tx.execute(sql`
+      SELECT "user_id" AS "userId", "is_enabled" AS "isEnabled", "key"
+      FROM "keys"
+      WHERE "id" = ${id} AND "deleted_at" IS NULL
+      FOR UPDATE
+    `) as unknown as Array<{ userId: number; isEnabled: boolean; key: string }>;
+    if (!current) return { ok: false as const, reason: "not_found" as const };
+
+    await lockUserKeyMutations(tx, current.userId);
+    const [locked] = await tx.execute(sql`
+      SELECT "user_id" AS "userId", "is_enabled" AS "isEnabled", "key"
+      FROM "keys"
+      WHERE "id" = ${id} AND "deleted_at" IS NULL
+      FOR UPDATE
+    `) as unknown as Array<{ userId: number; isEnabled: boolean; key: string }>;
+    if (!locked) return { ok: false as const, reason: "not_found" as const };
+
+    if (locked.isEnabled) {
+      const [countRow] = await tx.execute(sql`
+        SELECT count(*)::int AS "count"
+        FROM "keys"
+        WHERE "user_id" = ${locked.userId}
+          AND "is_enabled" = true
+          AND "deleted_at" IS NULL
+      `) as unknown as Array<{ count: number }>;
+      if (Number(countRow?.count ?? 0) <= 1) {
+        return { ok: false as const, reason: "last_enabled_key" as const };
+      }
+    }
+
+    await tx.execute(sql`
+      UPDATE "keys"
+      SET "deleted_at" = now(), "updated_at" = now()
+      WHERE "id" = ${id} AND "deleted_at" IS NULL
+    `);
+    return { ok: true as const, key: locked.key };
+  });
+
+  if (result.ok && result.key) {
+    await invalidateCachedKey(result.key).catch(() => {});
+  }
+  return result;
+}
+
 export async function deleteKey(id: number): Promise<boolean> {
   const result = await db
     .update(keys)

@@ -10,6 +10,7 @@ import {
   Globe,
   Key,
   MoreHorizontal,
+  RefreshCw,
   RotateCcw,
   ShieldCheck,
   Trash,
@@ -55,6 +56,7 @@ import {
   removeProvider,
   resetProviderCircuit,
   resetProviderTotalUsage,
+  syncProviderCostMultiplier,
   undoProviderDelete,
 } from "@/lib/api-client/v1/actions/providers";
 import {
@@ -74,6 +76,7 @@ import type {
   ProviderCircuitHealth,
   ProviderDisplay,
   ProviderStatistics,
+  ProviderUpstreamBilling,
   ProviderVendor,
 } from "@/types/provider";
 import type { User } from "@/types/user";
@@ -99,6 +102,8 @@ interface ProviderRichListItemProps {
   }>;
   statistics?: ProviderStatistics;
   statisticsLoading?: boolean;
+  upstreamBilling?: ProviderUpstreamBilling;
+  upstreamBillingLoading?: boolean;
   currencyCode?: CurrencyCode;
   enableMultiProviderTypes: boolean;
   isMultiSelectMode?: boolean;
@@ -121,6 +126,8 @@ function ProviderRichListItemInner({
   endpointCircuitInfo = [],
   statistics,
   statisticsLoading = false,
+  upstreamBilling,
+  upstreamBillingLoading = false,
   currencyCode = "USD",
   enableMultiProviderTypes,
   isMultiSelectMode = false,
@@ -185,6 +192,7 @@ function ProviderRichListItemInner({
   const [resetUsagePending, startResetUsageTransition] = useTransition();
   const [deletePending, startDeleteTransition] = useTransition();
   const [togglePending, startToggleTransition] = useTransition();
+  const [syncMultiplierPending, startSyncMultiplierTransition] = useTransition();
 
   const canEdit = currentUser?.role === "admin";
   const t = useTranslations("settings.providers");
@@ -417,6 +425,34 @@ function ProviderRichListItemInner({
         console.error("Failed to toggle provider status:", error);
         toast.error(tList("toggleFailed"), {
           description: tList("deleteError"),
+        });
+      }
+    });
+  };
+
+  const handleSyncCostMultiplier = () => {
+    startSyncMultiplierTransition(async () => {
+      try {
+        const res = await syncProviderCostMultiplier(provider.id);
+        if (res.ok) {
+          toast.success(tList("syncMultiplierSuccess"), {
+            description: tList("syncMultiplierSuccessDesc", {
+              multiplier: res.data.effectiveMultiplier ?? provider.costMultiplier,
+            }),
+          });
+          await Promise.all([
+            doInvalidate(),
+            queryClient.invalidateQueries({ queryKey: ["providers-upstream-billing"] }),
+          ]);
+        } else {
+          toast.error(tList("syncMultiplierFailed"), {
+            description: tList("syncMultiplierFailedDesc"),
+          });
+        }
+      } catch (error) {
+        console.error("Failed to sync provider cost multiplier:", error);
+        toast.error(tList("syncMultiplierFailed"), {
+          description: tList("syncMultiplierFailedDesc"),
         });
       }
     });
@@ -656,6 +692,35 @@ function ProviderRichListItemInner({
           </div>
         </div>
 
+        {(upstreamBillingLoading || upstreamBilling != null) && (
+          <div className="flex items-center gap-2 text-xs md:hidden">
+            <span className="text-muted-foreground">{tList("upstreamBillingLabel")}:</span>
+            {upstreamBillingLoading ? (
+              <Skeleton className="h-4 w-20" />
+            ) : upstreamBilling?.status === "ok" || upstreamBilling?.status === "partial" ? (
+              <span className="font-medium tabular-nums">
+                {upstreamBilling.balanceUsd !== null
+                  ? formatCurrency(upstreamBilling.balanceUsd, "USD")
+                  : tList("upstreamBalanceUnavailable")}
+                {upstreamBilling.status === "partial"
+                  ? ` · ${tList("upstreamBillingPartial")}`
+                  : upstreamBilling.balanceAggregation === "sum_of_keys"
+                    ? ` · ${tList("upstreamBillingKeySum")}`
+                    : ""}
+                {upstreamBilling.effectiveMultiplier !== null
+                  ? ` · ${upstreamBilling.effectiveMultiplier}x`
+                  : ""}
+              </span>
+            ) : (
+              <span className="text-destructive">
+                {upstreamBilling?.errorCode === "missing_new_api_account_credentials"
+                  ? tList("upstreamBillingCredentialsMissing")
+                  : tList("upstreamBillingError")}
+              </span>
+            )}
+          </div>
+        )}
+
         {/* Mobile: actions */}
         <div className="flex items-center justify-end gap-2 md:hidden">
           {canEdit && (
@@ -691,6 +756,15 @@ function ProviderRichListItemInner({
                     {tList("actionResetUsage")}
                   </DropdownMenuItem>
                 )}
+                <DropdownMenuItem
+                  onClick={handleSyncCostMultiplier}
+                  disabled={syncMultiplierPending}
+                >
+                  <RefreshCw
+                    className={cn("mr-2 h-4 w-4", syncMultiplierPending && "animate-spin")}
+                  />
+                  {tList("actionSyncMultiplier")}
+                </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
                   className="text-destructive"
@@ -919,7 +993,7 @@ function ProviderRichListItemInner({
             <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70">
               {tList("costMultiplier")}
             </div>
-            <div className="font-semibold text-sm">
+            <div className="flex items-center justify-center gap-1 font-semibold text-sm">
               {canEdit ? (
                 <InlineEditPopover
                   value={provider.costMultiplier}
@@ -931,6 +1005,29 @@ function ProviderRichListItemInner({
                 />
               ) : (
                 <span>{provider.costMultiplier}x</span>
+              )}
+              {canEdit && (
+                <Tooltip delayDuration={200}>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="ghost"
+                      className="h-6 w-6"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        handleSyncCostMultiplier();
+                      }}
+                      disabled={syncMultiplierPending}
+                      aria-label={tList("actionSyncMultiplier")}
+                    >
+                      <RefreshCw
+                        className={cn("h-3.5 w-3.5", syncMultiplierPending && "animate-spin")}
+                      />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>{tList("actionSyncMultiplier")}</TooltipContent>
+                </Tooltip>
               )}
             </div>
           </div>
@@ -962,6 +1059,45 @@ function ProviderRichListItemInner({
             </>
           )}
         </div>
+
+        {(upstreamBillingLoading || upstreamBilling != null) && (
+          <div className="hidden lg:block text-center flex-shrink-0 min-w-[112px] rounded-md bg-muted/30 px-2.5 py-1.5">
+            <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70">
+              {tList("upstreamBillingLabel")}
+            </div>
+            {upstreamBillingLoading ? (
+              <>
+                <Skeleton className="h-5 w-16 mx-auto my-0.5" />
+                <Skeleton className="h-4 w-12 mx-auto mt-0.5" />
+              </>
+            ) : upstreamBilling?.status === "ok" || upstreamBilling?.status === "partial" ? (
+              <>
+                <div className="font-semibold text-sm tabular-nums">
+                  {upstreamBilling.balanceUsd !== null
+                    ? formatCurrency(upstreamBilling.balanceUsd, "USD")
+                    : tList("upstreamBalanceUnavailable")}
+                </div>
+                <div className="text-xs font-mono text-muted-foreground mt-0.5">
+                  {upstreamBilling.source}
+                  {upstreamBilling.status === "partial"
+                    ? ` · ${tList("upstreamBillingPartial")}`
+                    : upstreamBilling.balanceAggregation === "sum_of_keys"
+                      ? ` · ${tList("upstreamBillingKeySum")}`
+                      : ""}
+                  {upstreamBilling.effectiveMultiplier !== null
+                    ? ` · ${upstreamBilling.effectiveMultiplier}x`
+                    : ""}
+                </div>
+              </>
+            ) : (
+              <div className="text-xs text-destructive">
+                {upstreamBilling?.errorCode === "missing_new_api_account_credentials"
+                  ? tList("upstreamBillingCredentialsMissing")
+                  : tList("upstreamBillingError")}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Desktop: action buttons */}
         <div className="hidden md:flex items-center gap-1 flex-shrink-0">
@@ -1156,6 +1292,8 @@ export const ProviderRichListItem = memo(ProviderRichListItemInner, (prev, next)
     prev.endpointCircuitInfo === next.endpointCircuitInfo &&
     prev.statistics === next.statistics &&
     prev.statisticsLoading === next.statisticsLoading &&
+    prev.upstreamBilling === next.upstreamBilling &&
+    prev.upstreamBillingLoading === next.upstreamBillingLoading &&
     prev.currencyCode === next.currencyCode &&
     prev.enableMultiProviderTypes === next.enableMultiProviderTypes &&
     prev.isMultiSelectMode === next.isMultiSelectMode &&

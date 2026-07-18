@@ -113,6 +113,7 @@ export async function POST(req: Request) {
       enableClaudeMetadataUserIdInjection: validated.enableClaudeMetadataUserIdInjection,
       enableResponseFixer: validated.enableResponseFixer,
       responseFixerConfig: validated.responseFixerConfig,
+      smartDispatchConfig: validated.smartDispatchConfig,
       quotaDbRefreshIntervalSeconds: validated.quotaDbRefreshIntervalSeconds,
       quotaLeasePercent5h: validated.quotaLeasePercent5h,
       quotaLeasePercentDaily: validated.quotaLeasePercentDaily,
@@ -126,6 +127,8 @@ export async function POST(req: Request) {
       changes: validated,
     });
     invalidateSystemSettingsCache();
+    const { invalidateSmartDispatchConfig } = await import("@/lib/smart-dispatch");
+    invalidateSmartDispatchConfig();
     const { invalidateProviderSelectorSystemSettingsCache } = await import(
       "@/app/v1/_lib/proxy/provider-selector-settings-cache"
     );

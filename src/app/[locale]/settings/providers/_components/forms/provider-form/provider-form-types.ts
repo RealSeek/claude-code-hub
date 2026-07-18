@@ -17,6 +17,7 @@ import type {
   ProviderDisplay,
   ProviderModelRedirectRule,
   ProviderType,
+  ProviderUpstreamBillingType,
 } from "@/types/provider";
 import type { BatchSettingsAnalysis } from "../../batch-edit/analyze-batch-settings";
 
@@ -44,7 +45,13 @@ export interface BasicInfoState {
   name: string;
   url: string;
   key: string;
+  apiKeysText: string;
+  keyStrategy: "sequential" | "round_robin";
   websiteUrl: string;
+  upstreamBillingType: ProviderUpstreamBillingType;
+  upstreamBillingCookie: string;
+  upstreamBillingUserId: string;
+  upstreamBillingRefreshIntervalMinutes: number;
 }
 
 export interface RoutingState {
@@ -91,6 +98,8 @@ export interface RateLimitState {
   limitMonthlyUsd: number | null;
   limitTotalUsd: number | null;
   limitConcurrentSessions: number | null;
+  rpm: number | null;
+  cc: number | null;
 }
 
 export interface CircuitBreakerState {
@@ -142,7 +151,13 @@ export type ProviderFormAction =
   | { type: "SET_NAME"; payload: string }
   | { type: "SET_URL"; payload: string }
   | { type: "SET_KEY"; payload: string }
+  | { type: "SET_API_KEYS_TEXT"; payload: string }
+  | { type: "SET_KEY_STRATEGY"; payload: "sequential" | "round_robin" }
   | { type: "SET_WEBSITE_URL"; payload: string }
+  | { type: "SET_UPSTREAM_BILLING_TYPE"; payload: ProviderUpstreamBillingType }
+  | { type: "SET_UPSTREAM_BILLING_COOKIE"; payload: string }
+  | { type: "SET_UPSTREAM_BILLING_USER_ID"; payload: string }
+  | { type: "SET_UPSTREAM_BILLING_REFRESH_INTERVAL_MINUTES"; payload: number }
   // Routing actions
   | { type: "SET_PROVIDER_TYPE"; payload: ProviderType }
   | { type: "SET_GROUP_TAG"; payload: string[] }
@@ -186,6 +201,8 @@ export type ProviderFormAction =
   | { type: "SET_LIMIT_MONTHLY_USD"; payload: number | null }
   | { type: "SET_LIMIT_TOTAL_USD"; payload: number | null }
   | { type: "SET_LIMIT_CONCURRENT_SESSIONS"; payload: number | null }
+  | { type: "SET_PROVIDER_RPM"; payload: number | null }
+  | { type: "SET_PROVIDER_CONCURRENCY"; payload: number | null }
   // Circuit breaker actions
   | { type: "SET_FAILURE_THRESHOLD"; payload: number | undefined }
   | { type: "SET_OPEN_DURATION_MINUTES"; payload: number | undefined }

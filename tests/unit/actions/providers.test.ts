@@ -112,11 +112,17 @@ describe("Provider Actions - Async Optimization", () => {
         name: "p1",
         url: "https://api.example.com",
         key: "sk-test-1234567890",
+        keyStrategy: "round_robin",
+        apiKeys: [],
         isEnabled: true,
         weight: 1,
         priority: 0,
         costMultiplier: 1,
         groupTag: "default",
+        upstreamBillingType: "new-api",
+        upstreamBillingAccessToken: "account-secret-token",
+        upstreamBillingCookie: "session=account-secret-cookie",
+        upstreamBillingUserId: "42",
         providerType: "claude",
         preserveClientIp: false,
         modelRedirects: null,
@@ -179,7 +185,7 @@ describe("Provider Actions - Async Optimization", () => {
       circuitBreakerHalfOpenSuccessThreshold: 2,
     });
 
-    deleteProviderMock.mockResolvedValue(undefined);
+    deleteProviderMock.mockResolvedValue(true);
     publishProviderCacheInvalidationMock.mockResolvedValue(undefined);
     saveProviderCircuitConfigMock.mockResolvedValue(undefined);
     deleteProviderCircuitConfigMock.mockResolvedValue(undefined);
@@ -197,6 +203,13 @@ describe("Provider Actions - Async Optimization", () => {
 
       expect(result).toHaveLength(1);
       expect(result[0]?.id).toBe(1);
+      expect(result[0]).toMatchObject({
+        hasUpstreamBillingAccessToken: true,
+        hasUpstreamBillingCookie: true,
+        upstreamBillingUserId: "42",
+      });
+      expect(result[0]).not.toHaveProperty("upstreamBillingAccessToken");
+      expect(result[0]).not.toHaveProperty("upstreamBillingCookie");
       expect(getProviderStatisticsMock).not.toHaveBeenCalled();
     });
 
@@ -516,6 +529,47 @@ describe("Provider Actions - Async Optimization", () => {
       expect(revalidatePathMock).not.toHaveBeenCalled();
     });
 
+    it("显式创建 New-API 时要求 Session Cookie 或 Access Token 与用户 ID", async () => {
+      const { addProvider } = await import("@/actions/providers");
+      const missingCredentials = await addProvider({
+        name: "new-api",
+        url: "https://api.example.com",
+        key: "sk-test-2",
+        upstream_billing_type: "new-api",
+        tpm: null,
+        rpm: null,
+        rpd: null,
+        cc: null,
+      });
+
+      expect(missingCredentials).toEqual({
+        ok: false,
+        error: "New-API 需要 Session Cookie（或 Access Token）和用户 ID",
+      });
+      expect(createProviderMock).not.toHaveBeenCalled();
+
+      const configured = await addProvider({
+        name: "new-api",
+        url: "https://api.example.com",
+        key: "sk-test-2",
+        upstream_billing_type: "new-api",
+        upstream_billing_cookie: "session=test-cookie",
+        upstream_billing_user_id: "42",
+        tpm: null,
+        rpm: null,
+        rpd: null,
+        cc: null,
+      });
+
+      expect(configured.ok).toBe(true);
+      expect(createProviderMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          upstream_billing_cookie: "session=test-cookie",
+          upstream_billing_user_id: "42",
+        })
+      );
+    });
+
     it("should complete quickly without blocking", async () => {
       const { addProvider } = await import("@/actions/providers");
       const start = nowMs();
@@ -570,6 +624,24 @@ describe("Provider Actions - Async Optimization", () => {
       expect(result.ok).toBe(true);
       expect(revalidatePathMock).not.toHaveBeenCalled();
       expect(terminateProviderSessionsBatchMock).not.toHaveBeenCalled();
+    });
+
+    it("首次切换到 New-API 时要求同时配置账户凭据", async () => {
+      findProviderByIdMock.mockResolvedValueOnce({
+        ...(await findAllProvidersFreshMock())[0],
+        upstreamBillingType: "auto",
+        upstreamBillingAccessToken: null,
+        upstreamBillingCookie: null,
+        upstreamBillingUserId: null,
+      });
+      const { editProvider } = await import("@/actions/providers");
+      const result = await editProvider(1, { upstream_billing_type: "new-api" });
+
+      expect(result).toEqual({
+        ok: false,
+        error: "New-API 需要 Session Cookie（或 Access Token）和用户 ID",
+      });
+      expect(updateProviderMock).not.toHaveBeenCalled();
     });
 
     it("editProvider endpoint sync: should forward url/provider_type edits to repository", async () => {

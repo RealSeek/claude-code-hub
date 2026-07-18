@@ -14,9 +14,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import { detectApiKeyWarnings } from "@/lib/utils/validation/api-key-warnings";
-import type { ProviderType } from "@/types/provider";
+import type { ProviderType, ProviderUpstreamBillingType } from "@/types/provider";
 import { UrlPreview } from "../../url-preview";
+import { ProviderKeyPoolEditor } from "../components/provider-key-pool-editor";
 import { QuickPasteDialog } from "../components/quick-paste-dialog";
 import { SectionCard, SmartInputWrapper } from "../components/section-card";
 import { useProviderForm } from "../provider-form-context";
@@ -42,6 +44,7 @@ export function BasicInfoSection({ autoUrlPending, endpointPool }: BasicInfoSect
   const isBatch = mode === "batch";
   const nameInputRef = useRef<HTMLInputElement>(null);
   const [showKey, setShowKey] = useState(false);
+  const [showBillingCookie, setShowBillingCookie] = useState(false);
 
   const apiKeyWarnings = useMemo(() => detectApiKeyWarnings(state.basic.key), [state.basic.key]);
 
@@ -270,6 +273,142 @@ export function BasicInfoSection({ autoUrlPending, endpointPool }: BasicInfoSect
       >
         <div className="space-y-4">
           <SmartInputWrapper
+            label={t("sections.basic.upstreamBillingType.label")}
+            description={t("sections.basic.upstreamBillingType.desc")}
+          >
+            <Select
+              value={state.basic.upstreamBillingType}
+              onValueChange={(value) =>
+                dispatch({
+                  type: "SET_UPSTREAM_BILLING_TYPE",
+                  payload: value as ProviderUpstreamBillingType,
+                })
+              }
+              disabled={state.ui.isPending}
+            >
+              <SelectTrigger id={isEdit ? "edit-upstream-billing-type" : "upstream-billing-type"}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="auto">
+                  {t("sections.basic.upstreamBillingType.options.auto")}
+                </SelectItem>
+                <SelectItem value="sub2api">
+                  {t("sections.basic.upstreamBillingType.options.sub2api")}
+                </SelectItem>
+                <SelectItem value="new-api">
+                  {t("sections.basic.upstreamBillingType.options.newApi")}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </SmartInputWrapper>
+
+          <SmartInputWrapper
+            label={t("sections.basic.upstreamBillingRefreshInterval.label")}
+            description={t("sections.basic.upstreamBillingRefreshInterval.desc")}
+          >
+            <Input
+              id={
+                isEdit
+                  ? "edit-upstream-billing-refresh-interval"
+                  : "upstream-billing-refresh-interval"
+              }
+              type="number"
+              min={0}
+              max={10080}
+              step={1}
+              value={state.basic.upstreamBillingRefreshIntervalMinutes}
+              onChange={(event) =>
+                dispatch({
+                  type: "SET_UPSTREAM_BILLING_REFRESH_INTERVAL_MINUTES",
+                  payload: Number.parseInt(event.target.value, 10) || 0,
+                })
+              }
+              placeholder={t("sections.basic.upstreamBillingRefreshInterval.placeholder")}
+              disabled={state.ui.isPending}
+            />
+          </SmartInputWrapper>
+
+          {state.basic.upstreamBillingType === "new-api" && (
+            <div className="grid gap-4 md:grid-cols-2">
+              <SmartInputWrapper
+                label={t("sections.basic.newApiAccount.userId.label")}
+                description={t("sections.basic.newApiAccount.userId.desc")}
+                required
+              >
+                <Input
+                  id={isEdit ? "edit-upstream-billing-user-id" : "upstream-billing-user-id"}
+                  value={state.basic.upstreamBillingUserId}
+                  onChange={(event) =>
+                    dispatch({
+                      type: "SET_UPSTREAM_BILLING_USER_ID",
+                      payload: event.target.value,
+                    })
+                  }
+                  placeholder={t("sections.basic.newApiAccount.userId.placeholder")}
+                  disabled={state.ui.isPending}
+                  autoComplete="off"
+                />
+              </SmartInputWrapper>
+
+              <SmartInputWrapper
+                label={t("sections.basic.newApiAccount.cookie.label")}
+                description={
+                  isEdit &&
+                  (provider?.hasUpstreamBillingCookie || provider?.hasUpstreamBillingAccessToken)
+                    ? t("sections.basic.newApiAccount.cookie.configured")
+                    : t("sections.basic.newApiAccount.cookie.desc")
+                }
+                required={
+                  !isEdit ||
+                  (!provider?.hasUpstreamBillingCookie && !provider?.hasUpstreamBillingAccessToken)
+                }
+              >
+                <div className="relative">
+                  <Input
+                    id={isEdit ? "edit-upstream-billing-cookie" : "upstream-billing-cookie"}
+                    type={showBillingCookie ? "text" : "password"}
+                    value={state.basic.upstreamBillingCookie}
+                    onChange={(event) =>
+                      dispatch({
+                        type: "SET_UPSTREAM_BILLING_COOKIE",
+                        payload: event.target.value,
+                      })
+                    }
+                    placeholder={
+                      isEdit &&
+                      (provider?.hasUpstreamBillingCookie ||
+                        provider?.hasUpstreamBillingAccessToken)
+                        ? t("sections.basic.newApiAccount.cookie.leaveEmpty")
+                        : t("sections.basic.newApiAccount.cookie.placeholder")
+                    }
+                    disabled={state.ui.isPending}
+                    className="pr-10 font-mono text-sm"
+                    autoComplete="new-password"
+                    spellCheck={false}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowBillingCookie((visible) => !visible)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                    aria-label={
+                      showBillingCookie
+                        ? t("sections.basic.newApiAccount.cookie.hide")
+                        : t("sections.basic.newApiAccount.cookie.show")
+                    }
+                  >
+                    {showBillingCookie ? (
+                      <EyeOff className="h-4 w-4" />
+                    ) : (
+                      <Eye className="h-4 w-4" />
+                    )}
+                  </button>
+                </div>
+              </SmartInputWrapper>
+            </div>
+          )}
+
+          <SmartInputWrapper
             label={isEdit ? t("key.labelEdit") : t("key.label")}
             description={
               isEdit && provider ? t("key.currentKey", { key: provider.maskedKey }) : undefined
@@ -304,6 +443,55 @@ export function BasicInfoSection({ autoUrlPending, endpointPool }: BasicInfoSect
               </div>
             )}
           </SmartInputWrapper>
+
+          {isEdit && provider ? (
+            <SmartInputWrapper
+              label={t("key.keyPool.label")}
+              description={t("key.keyPool.description")}
+            >
+              <ProviderKeyPoolEditor providerId={provider.id} disabled={state.ui.isPending} />
+            </SmartInputWrapper>
+          ) : (
+            <>
+              <SmartInputWrapper
+                label={t("key.keyPool.label")}
+                description={t("key.keyPool.description")}
+              >
+                <Textarea
+                  value={state.basic.apiKeysText}
+                  onChange={(event) =>
+                    dispatch({ type: "SET_API_KEYS_TEXT", payload: event.target.value })
+                  }
+                  placeholder={t("key.keyPool.placeholder")}
+                  disabled={state.ui.isPending}
+                  rows={4}
+                  className="font-mono text-sm"
+                  spellCheck={false}
+                />
+              </SmartInputWrapper>
+
+              <SmartInputWrapper label={t("key.keyPool.strategyLabel")}>
+                <Select
+                  value={state.basic.keyStrategy}
+                  onValueChange={(value) =>
+                    dispatch({
+                      type: "SET_KEY_STRATEGY",
+                      payload: value as "sequential" | "round_robin",
+                    })
+                  }
+                  disabled={state.ui.isPending}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="round_robin">{t("key.keyPool.roundRobin")}</SelectItem>
+                    <SelectItem value="sequential">{t("key.keyPool.sequential")}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </SmartInputWrapper>
+            </>
+          )}
         </div>
       </SectionCard>
     </motion.div>

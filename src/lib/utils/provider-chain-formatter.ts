@@ -64,12 +64,18 @@ function formatDescriptionCandidate(
 }
 
 function formatTimelineCandidate(
-  candidate: { name: string; weight: number; costMultiplier: number; probability?: number },
+  candidate: {
+    name: string;
+    weight: number;
+    effectiveWeight?: number;
+    costMultiplier: number;
+    probability?: number;
+  },
   t: (key: string, values?: Record<string, string | number>) => string
 ): string {
   const baseValues = {
     name: candidate.name,
-    weight: candidate.weight,
+    weight: candidate.effectiveWeight ?? candidate.weight,
     cost: candidate.costMultiplier,
   };
   const formattedProbability = formatProbability(candidate.probability);

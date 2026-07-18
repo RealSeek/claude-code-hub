@@ -39,6 +39,8 @@ export interface DispatchSimulatorProviderSnapshot {
   priority: number;
   effectivePriority: number;
   weight: number;
+  readyKeyCount?: number;
+  effectiveWeight?: number;
   details?: string;
   redirectedModel?: string | null;
   endpointStats?: DispatchSimulatorEndpointStats | null;
@@ -60,6 +62,7 @@ export interface DispatchSimulatorPriorityProvider extends DispatchSimulatorProv
 
 export interface DispatchSimulatorPriorityTier {
   priority: number;
+  smartScore?: number;
   providers: DispatchSimulatorPriorityProvider[];
   isSelected: boolean;
 }

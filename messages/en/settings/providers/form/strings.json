@@ -182,7 +182,7 @@
   "websiteUrlInvalid": "Please enter a valid provider website URL",
   "websiteUrlPlaceholder": "https://example.com",
   "weight": "Weight",
-  "weightDesc": "Weighted random probability. Within same priority, higher weight = higher selection probability. E.g. weights 1:2:3 = probabilities 16%:33%:50%",
+  "weightDesc": "Base weight. Within the same smart-score tier, effective weight = base weight × currently available keys; cooled keys automatically reduce traffic.",
   "weightLabel": "Weight",
   "weightPlaceholder": "1"
 }

@@ -89,6 +89,7 @@ async function SettingsConfigContent({ locale }: { locale: string }) {
             enableClaudeMetadataUserIdInjection: settings.enableClaudeMetadataUserIdInjection,
             enableResponseFixer: settings.enableResponseFixer,
             responseFixerConfig: settings.responseFixerConfig,
+            smartDispatchConfig: settings.smartDispatchConfig,
             quotaDbRefreshIntervalSeconds: settings.quotaDbRefreshIntervalSeconds,
             quotaLeasePercent5h: settings.quotaLeasePercent5h,
             quotaLeasePercentDaily: settings.quotaLeasePercentDaily,

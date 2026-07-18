@@ -33,6 +33,7 @@ import type {
   ProviderHealthStatus,
   ProviderStatisticsMap,
   ProviderType,
+  ProviderUpstreamBillingMap,
 } from "@/types/provider";
 import type { User } from "@/types/user";
 import {
@@ -69,6 +70,8 @@ interface ProviderManagerProps {
   endpointCircuitInfo?: EndpointCircuitInfoMap;
   statistics?: ProviderStatisticsMap;
   statisticsLoading?: boolean;
+  upstreamBilling?: ProviderUpstreamBillingMap;
+  upstreamBillingLoading?: boolean;
   currencyCode?: CurrencyCode;
   enableMultiProviderTypes: boolean;
   loading?: boolean;
@@ -83,6 +86,8 @@ export function ProviderManager({
   endpointCircuitInfo = {},
   statistics = {},
   statisticsLoading = false,
+  upstreamBilling = {},
+  upstreamBillingLoading = false,
   currencyCode = "USD",
   enableMultiProviderTypes,
   loading = false,
@@ -680,6 +685,8 @@ export function ProviderManager({
               endpointCircuitInfo={endpointCircuitInfo}
               statistics={statistics}
               statisticsLoading={statisticsLoading}
+              upstreamBilling={upstreamBilling}
+              upstreamBillingLoading={upstreamBillingLoading}
               currencyCode={currencyCode}
               enableMultiProviderTypes={enableMultiProviderTypes}
               activeGroupFilter={groupFilter.length === 1 ? groupFilter[0] : null}

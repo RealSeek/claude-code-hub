@@ -247,6 +247,12 @@ export function buildPatchDraftFromFormState(
       draft.limit_concurrent_sessions = { set: state.rateLimit.limitConcurrentSessions };
     }
   }
+  if (dirtyFields.has("rateLimit.rpm")) {
+    draft.rpm_limit = { set: state.rateLimit.rpm ?? 0 };
+  }
+  if (dirtyFields.has("rateLimit.cc")) {
+    draft.max_concurrency = { set: state.rateLimit.cc ?? 0 };
+  }
 
   // Circuit breaker fields (minutes -> ms conversion for open duration)
   if (dirtyFields.has("circuitBreaker.failureThreshold")) {

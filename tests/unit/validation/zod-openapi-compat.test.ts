@@ -36,8 +36,16 @@ describe("validation schemas after OpenAPI zod registration", () => {
 
     expect(created.allowed_clients).toEqual([]);
     expect(created.blocked_clients).toEqual([]);
+    expect(created.upstream_billing_type).toBe("auto");
+    expect(created.upstream_billing_access_token).toBeUndefined();
+    expect(created.upstream_billing_cookie).toBeUndefined();
+    expect(created.upstream_billing_user_id).toBeUndefined();
     expect(updated.allowed_clients).toBeUndefined();
     expect(updated.blocked_clients).toBeUndefined();
+    expect(updated.upstream_billing_type).toBeUndefined();
+    expect(updated.upstream_billing_access_token).toBeUndefined();
+    expect(updated.upstream_billing_cookie).toBeUndefined();
+    expect(updated.upstream_billing_user_id).toBeUndefined();
     expect(updated.request_timeout_non_streaming_ms).toBe(1_800_000);
   });
 });

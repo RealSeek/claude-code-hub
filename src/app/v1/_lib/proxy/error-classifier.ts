@@ -14,6 +14,7 @@
  */
 
 import { logger } from "@/lib/logger";
+import { parseSSEData } from "@/lib/utils/sse";
 import type { Provider } from "@/types/provider";
 
 /**
@@ -50,6 +51,7 @@ const STATUS_CODE_META_MAP = new Map<number, ErrorLevel>([
   [402, ErrorLevel.Key], // Payment Required - quota/balance
   [403, ErrorLevel.Key], // Forbidden - Key permission
   [429, ErrorLevel.Key], // Too Many Requests - rate limited（默认 Key 级，需语义分析）
+  [596, ErrorLevel.Key], // ccLoad: 上游 Key 级错误
 
   // === Channel 级错误：服务器端问题 ===
   [444, ErrorLevel.Channel], // nginx: No Response
@@ -60,6 +62,9 @@ const STATUS_CODE_META_MAP = new Map<number, ErrorLevel>([
   [520, ErrorLevel.Channel], // Cloudflare: Unknown Error
   [521, ErrorLevel.Channel], // Cloudflare: Web Server Is Down
   [524, ErrorLevel.Channel], // Cloudflare: A Timeout Occurred
+  [597, ErrorLevel.Channel], // ccLoad: SSE 错误默认按 Channel，具体类型由语义分析覆盖
+  [598, ErrorLevel.Channel], // ccLoad: 首字节超时
+  [599, ErrorLevel.Channel], // ccLoad: 流不完整
 
   // === 客户端错误：不冷却，直接返回 ===
   [408, ErrorLevel.Client], // Request Timeout
@@ -123,23 +128,256 @@ export function classifyHTTPResponse(
   headers: Headers,
   responseBody: string | null
 ): HTTPResponseClassification {
+  if (statusCode === 400) {
+    const body = responseBody?.toLowerCase() ?? "";
+    const invalidKey = ["invalid api key", "invalid_api_key", "api key is invalid", "unauthorized"].some(
+      (pattern) => body.includes(pattern)
+    );
+    return withResetTime(
+      invalidKey
+        ? { level: ErrorLevel.Key, reason: "invalid_api_key" }
+        : { level: ErrorLevel.Channel, reason: "bad_request_channel" },
+      responseBody,
+      headers
+    );
+  }
+
+  if (statusCode === 404) {
+    const body = responseBody?.toLowerCase() ?? "";
+    const modelNotFound = ["model not found", "model_not_found", "unknown model", "does not exist"].some(
+      (pattern) => body.includes(pattern)
+    );
+    return withResetTime(
+      modelNotFound
+        ? { level: ErrorLevel.Client, reason: "model_not_found" }
+        : { level: ErrorLevel.Channel, reason: "resource_not_found_channel" },
+      responseBody,
+      headers
+    );
+  }
+
+  if (statusCode === 597) {
+    const body = responseBody?.toLowerCase() ?? "";
+    const keyScoped = ["rate_limit", "rate limit", "authentication", "auth_error", "invalid_request"].some(
+      (pattern) => body.includes(pattern)
+    );
+    return withResetTime(
+      keyScoped
+        ? { level: ErrorLevel.Key, reason: "sse_key_error" }
+        : { level: ErrorLevel.Channel, reason: "sse_channel_error" },
+      responseBody,
+      headers
+    );
+  }
+
   // [优先级 1] 检测 "假 200" 错误（HTTP 200 但响应体是错误）
-  // TODO: 实现假 200 检测逻辑（类似你现在的 upstream-error-detection.ts）
+  // 结构化配额错误可能以 200 或 SSE 内部错误形式返回，必须先于 HTTP 状态码判断。
+  const structured = classifyStructuredQuotaError(responseBody);
+  if (structured) {
+    return structured;
+  }
 
   // [优先级 2] 429 限流错误智能分类
   if (statusCode === 429) {
-    return classify429RateLimit(headers, responseBody);
+    return withResetTime(classify429RateLimit(headers, responseBody), responseBody, headers);
   }
 
   // [优先级 3] 401/403 语义分析
   if (statusCode === 401 || statusCode === 403) {
-    return classify401403Auth(responseBody);
+    return withResetTime(classify401403Auth(responseBody), responseBody, headers);
   }
 
   // [优先级 4] 其他状态码走表驱动
-  return {
-    level: getErrorLevelFromStatus(statusCode),
-  };
+  return withResetTime({ level: getErrorLevelFromStatus(statusCode) }, responseBody, headers);
+}
+
+/** 兼容 ccLoad 的结构化配额错误和 1308 错误。 */
+function classifyStructuredQuotaError(responseBody: string | null): HTTPResponseClassification | null {
+  if (!responseBody) return null;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(responseBody);
+  } catch {
+    for (const event of parseSSEData(responseBody)) {
+      if (typeof event.data !== "object" || event.data === null) continue;
+      const classified = classifyStructuredQuotaValue(event.data, responseBody);
+      if (classified) return classified;
+    }
+    return null;
+  }
+
+  return classifyStructuredQuotaValue(parsed, responseBody);
+}
+
+function classifyStructuredQuotaValue(
+  parsed: unknown,
+  responseBody: string
+): HTTPResponseClassification | null {
+
+  const root = objectValueForReset(parsed);
+  const error = objectValueForReset(root?.error);
+  const records = [root, error].filter(
+    (value): value is Record<string, unknown> => value !== null
+  );
+  if (records.length === 0) return null;
+
+  const valueAsString = (value: unknown): string =>
+    typeof value === "string" || typeof value === "number" ? String(value).trim() : "";
+  const prioritizedRecords = [error, root].filter(
+    (value): value is Record<string, unknown> => value !== null
+  );
+  const code = prioritizedRecords
+    .map((record) => valueAsString(record.code) || valueAsString(record.type))
+    .find(Boolean)
+    ?.toUpperCase();
+  const status = prioritizedRecords
+    .map((record) => valueAsString(record.status))
+    .find(Boolean)
+    ?.toUpperCase();
+  const message = prioritizedRecords.map((record) => valueAsString(record.message)).find(Boolean) ?? "";
+  const upperMessage = message.toUpperCase();
+  const resetAt = parseResetTimeFromResponse(responseBody) ?? undefined;
+  const resetSeconds = resetAt
+    ? Math.max(1, Math.ceil((Date.parse(resetAt) - Date.now()) / 1000))
+    : undefined;
+
+  // 1308/1310 常出现在 HTTP 200 的 SSE 或 Anthropic 错误体中。
+  if (code === "1308" || code === "1310") {
+    const messageResetAt = parseCalendarResetTime(message);
+    return {
+      level: ErrorLevel.Key,
+      reason: code,
+      keyCooldownSeconds: resetSeconds ?? (messageResetAt ? undefined : COOLDOWN_DURATIONS.KEY_DEFAULT),
+      resetAt: messageResetAt ?? resetAt,
+    };
+  }
+
+  if (code === "MODEL_COOLDOWN") {
+    return resetAt
+      ? { level: ErrorLevel.Key, reason: "model_cooldown", keyCooldownSeconds: resetSeconds, resetAt }
+      : null;
+  }
+
+  if (status === "RESOURCE_EXHAUSTED" || upperMessage.includes("RESOURCE_EXHAUSTED")) {
+    const retrySeconds = parseRetryInSeconds(message);
+    if (retrySeconds == null) return null;
+    return {
+      level: ErrorLevel.Key,
+      reason: "RESOURCE_EXHAUSTED_RETRY_IN",
+      keyCooldownSeconds: retrySeconds,
+      resetAt: calculateCooldownEndTime(retrySeconds),
+    };
+  }
+
+  if (code === "API_KEY_QUOTA_EXHAUSTED" || code === "FREE_TIER_BUDGET_EXCEEDED") {
+    return {
+      level: ErrorLevel.Key,
+      reason: code,
+      keyCooldownSeconds: resetSeconds ?? 30 * 60,
+      resetAt,
+    };
+  }
+
+  if (code === "DAILY_LIMIT_EXCEEDED") {
+    const nextMidnight = new Date();
+    nextMidnight.setHours(24, 0, 0, 0);
+    return {
+      level: ErrorLevel.Key,
+      reason: code,
+      keyCooldownSeconds: Math.max(1, Math.ceil((nextMidnight.getTime() - Date.now()) / 1000)),
+      resetAt: nextMidnight.toISOString(),
+    };
+  }
+
+  if (code === "GLOBAL_FIXED_WINDOW_QUOTA_EXHAUSTED") {
+    const windowResetAt = parseFixedWindowResetTime(message);
+    return windowResetAt
+      ? {
+          level: ErrorLevel.Channel,
+          reason: code,
+          channelCooldownSeconds: Math.max(
+            1,
+            Math.ceil((Date.parse(windowResetAt) - Date.now()) / 1000)
+          ),
+          resetAt: windowResetAt,
+        }
+      : null;
+  }
+
+  if (code === "USAGE_LIMIT_REACHED") {
+    return {
+      level: ErrorLevel.Key,
+      reason: code,
+      keyCooldownSeconds: resetSeconds ?? 30 * 60,
+      resetAt,
+    };
+  }
+
+  if (code === "RATE_LIMIT_EXCEEDED") {
+    const retrySeconds = parseRetryAfterMessageSeconds(message);
+    if (retrySeconds != null) {
+      return {
+        level: ErrorLevel.Key,
+        reason: "RATE_LIMIT_RETRY_AFTER",
+        keyCooldownSeconds: retrySeconds,
+        resetAt: calculateCooldownEndTime(retrySeconds),
+      };
+    }
+  }
+
+  return null;
+}
+
+function parseCalendarResetTime(message: string): string | undefined {
+  const match = message.match(/\b(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2})\b/);
+  if (!match) return undefined;
+  const parsed = new Date(`${match[1].replace(" ", "T")}Z`);
+  return Number.isFinite(parsed.getTime()) && parsed.getTime() > Date.now()
+    ? parsed.toISOString()
+    : undefined;
+}
+
+function parseFixedWindowResetTime(message: string): string | undefined {
+  const match = message.match(/\b(today|tomorrow|今天|明天)\s*(\d{1,2})\s*[:：]\s*(\d{1,2})/i);
+  if (!match) return undefined;
+  const resetAt = new Date();
+  resetAt.setHours(Number(match[2]), Number(match[3]), 0, 0);
+  if (/tomorrow|明天/i.test(match[1])) resetAt.setDate(resetAt.getDate() + 1);
+  if (resetAt.getTime() <= Date.now()) resetAt.setDate(resetAt.getDate() + 1);
+  return resetAt.toISOString();
+}
+
+function parseRetryInSeconds(message: string): number | null {
+  const match = message.match(/retry\s+in\s+([0-9]+(?:\.[0-9]+)?)(ns|us|µs|ms|s|m|h)/i);
+  if (!match) return null;
+  const amount = Number(match[1]);
+  const unit = match[2].toLowerCase();
+  const multiplier =
+    unit === "h" ? 3600 : unit === "m" ? 60 : unit === "ms" ? 0.001 : unit === "us" || unit === "µs" ? 0.000001 : unit === "ns" ? 0.000000001 : 1;
+  const seconds = amount * multiplier;
+  return Number.isFinite(seconds) && seconds > 0 ? Math.max(1, Math.ceil(seconds)) : null;
+}
+
+function parseRetryAfterMessageSeconds(message: string): number | null {
+  const match = message.match(/retry\s+after\s+([0-9]+)\s*seconds?/i);
+  const seconds = match ? Number(match[1]) : NaN;
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : null;
+}
+
+function withResetTime(
+  classification: HTTPResponseClassification,
+  responseBody: string | null,
+  headers?: Headers
+): HTTPResponseClassification {
+  const bodyResetAt = parseResetTimeFromResponse(responseBody);
+  const headerResetAt = parseRetryAfterResetTime(headers?.get("retry-after"));
+  const resetAt = [bodyResetAt, headerResetAt].find((value) => {
+    if (!value) return false;
+    const timestamp = Date.parse(value);
+    return Number.isFinite(timestamp) && timestamp > Date.now();
+  });
+  return resetAt ? { ...classification, resetAt } : classification;
 }
 
 /**
@@ -158,8 +396,8 @@ function classify429RateLimit(
   // 检查 Retry-After 头
   const retryAfter = headers.get("retry-after");
   if (retryAfter) {
-    const seconds = parseInt(retryAfter, 10);
-    if (!isNaN(seconds)) {
+    const seconds = parseRetryAfterSeconds(retryAfter);
+    if (seconds != null && seconds > 0) {
       if (seconds > 60) {
         // 长时间限流 → Channel 级
         return {
@@ -232,9 +470,13 @@ function classify401403Auth(responseBody: string | null): HTTPResponseClassifica
   // Channel 级错误特征：仅限账户级不可逆错误
   const channelErrorPatterns = [
     "account suspended",
+    "account has been suspended",
     "account disabled",
+    "account has been disabled",
     "account banned",
+    "account has been banned",
     "service disabled",
+    "service has been disabled",
   ];
 
   for (const pattern of channelErrorPatterns) {
@@ -297,27 +539,42 @@ export function parseResetTimeFromResponse(responseBody: string | null): string 
   try {
     const body = JSON.parse(responseBody);
 
-    // 常见字段名
-    const resetFields = ["reset_at", "resetAt", "reset_time", "resetTime", "retry_after_time"];
+    const records = [
+      objectValueForReset(body),
+      objectValueForReset(objectValueForReset(body)?.error),
+    ].filter((value): value is Record<string, unknown> => value !== null);
+    const absoluteFields = [
+      "reset_at",
+      "resetAt",
+      "resets_at",
+      "reset_time",
+      "resetTime",
+      "retry_after_time",
+    ];
+    const relativeFields = [
+      "reset_seconds",
+      "resetSeconds",
+      "resets_in_seconds",
+      "resetsInSeconds",
+      "retry_after_seconds",
+      "retryAfterSeconds",
+    ];
+    const durationFields = ["reset_time", "resetTime"];
 
-    for (const field of resetFields) {
-      const value = body[field] || body.error?.[field];
-      if (!value) continue;
-
-      // 尝试解析时间
-      if (typeof value === "string") {
-        // ISO 8601 或 中国时区格式
-        const parsed = new Date(value.replace(" ", "T") + (value.includes("T") ? "" : "Z"));
-        if (!isNaN(parsed.getTime())) {
-          return parsed.toISOString();
+    for (const record of records) {
+      for (const field of absoluteFields) {
+        const parsed = parseAbsoluteResetValue(record[field]);
+        if (parsed) return parsed;
+      }
+      for (const field of relativeFields) {
+        const seconds = finiteResetNumber(record[field]);
+        if (seconds != null && seconds > 0) {
+          return new Date(Date.now() + seconds * 1000).toISOString();
         }
-      } else if (typeof value === "number") {
-        // Unix 时间戳（自动检测秒/毫秒）
-        const timestamp = value < 10000000000 ? value * 1000 : value;
-        const parsed = new Date(timestamp);
-        if (!isNaN(parsed.getTime())) {
-          return parsed.toISOString();
-        }
+      }
+      for (const field of durationFields) {
+        const parsed = parseResetDuration(record[field]);
+        if (parsed) return parsed;
       }
     }
   } catch (error) {
@@ -326,6 +583,61 @@ export function parseResetTimeFromResponse(responseBody: string | null): string 
   }
 
   return null;
+}
+
+function objectValueForReset(value: unknown): Record<string, unknown> | null {
+  return value != null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function finiteResetNumber(value: unknown): number | null {
+  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function parseAbsoluteResetValue(value: unknown): string | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const timestamp = value < 10_000_000_000 ? value * 1000 : value;
+    const parsed = new Date(timestamp);
+    return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+  }
+  if (typeof value !== "string" || value.trim() === "") return null;
+  const normalized =
+    value.includes(" ") && !value.includes("T") ? `${value.replace(" ", "T")}Z` : value;
+  const parsed = new Date(normalized);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
+function parseResetDuration(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const match = value.trim().match(/^(?:(\d+(?:\.\d+)?)h)?(?:(\d+(?:\.\d+)?)m)?(?:(\d+(?:\.\d+)?)s)?$/i);
+    if (!match?.[0] || !match.slice(1).some(Boolean)) return null;
+  const seconds =
+    Number(match[1] ?? 0) * 3600 + Number(match[2] ?? 0) * 60 + Number(match[3] ?? 0);
+  return Number.isFinite(seconds) && seconds > 0
+    ? new Date(Date.now() + seconds * 1000).toISOString()
+    : null;
+}
+
+function parseRetryAfterResetTime(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) {
+    return seconds > 0 ? new Date(Date.now() + seconds * 1000).toISOString() : null;
+  }
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) && timestamp > Date.now()
+    ? new Date(timestamp).toISOString()
+    : null;
+}
+
+function parseRetryAfterSeconds(value: string): number | null {
+  const numeric = Number(value);
+  if (Number.isFinite(numeric)) return Math.max(0, Math.ceil(numeric));
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return null;
+  return Math.max(0, Math.ceil((timestamp - Date.now()) / 1000));
 }
 
 /**
@@ -361,10 +673,11 @@ export function generateCooldownAdvice(
   // Key 级错误：冷却当前 Provider（短时间）
   if (classification.level === ErrorLevel.Key) {
     const seconds = classification.keyCooldownSeconds || COOLDOWN_DURATIONS.KEY_DEFAULT;
+    const resetAt = validFutureResetAt(classification.resetAt);
     return {
       shouldCooldown: true,
       cooldownSeconds: seconds,
-      cooldownUntil: calculateCooldownEndTime(seconds),
+      cooldownUntil: resetAt ?? calculateCooldownEndTime(seconds),
       reason: classification.reason || "key_error",
     };
   }
@@ -372,13 +685,20 @@ export function generateCooldownAdvice(
   // Channel 级错误：冷却整个 Provider（长时间）
   if (classification.level === ErrorLevel.Channel) {
     const seconds = classification.channelCooldownSeconds || COOLDOWN_DURATIONS.CHANNEL_DEFAULT;
+    const resetAt = validFutureResetAt(classification.resetAt);
     return {
       shouldCooldown: true,
       cooldownSeconds: seconds,
-      cooldownUntil: calculateCooldownEndTime(seconds),
+      cooldownUntil: resetAt ?? calculateCooldownEndTime(seconds),
       reason: classification.reason || "channel_error",
     };
   }
 
   return null;
+}
+
+function validFutureResetAt(resetAt: string | undefined): string | null {
+  if (!resetAt) return null;
+  const timestamp = Date.parse(resetAt);
+  return Number.isFinite(timestamp) && timestamp > Date.now() ? new Date(timestamp).toISOString() : null;
 }

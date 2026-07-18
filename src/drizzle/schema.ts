@@ -16,8 +16,14 @@ import {
 import { relations, sql } from 'drizzle-orm';
 import type { SpecialSetting } from '@/types/special-settings';
 import type { HedgeLoserBilling, StoredCostBreakdown } from '@/types/cost-breakdown';
-import type { ResponseFixerConfig } from '@/types/system-config';
-import type { AllowedModelRuleInput, ProviderModelRedirectRule, ProviderType } from "@/types/provider";
+import type { ResponseFixerConfig, SmartDispatchSettings } from '@/types/system-config';
+import type {
+  AllowedModelRuleInput,
+  ProviderModelRedirectRule,
+  ProviderType,
+  ProviderUpstreamBilling,
+  ProviderUpstreamBillingType,
+} from "@/types/provider";
 import type { FilterOperation } from "@/lib/request-filter-types";
 import type { IpExtractionConfig } from "@/types/ip-extraction";
 import type { AuditCategory } from "@/types/audit-log";
@@ -187,6 +193,10 @@ export const providers = pgTable('providers', {
   description: text('description'),
   url: varchar('url').notNull(),
   key: varchar('key').notNull(),
+  keyStrategy: varchar('key_strategy', { length: 20 })
+    .notNull()
+    .default('round_robin')
+    .$type<'sequential' | 'round_robin'>(),
   providerVendorId: integer('provider_vendor_id')
     .notNull()
     .references(() => providerVendors.id, {
@@ -200,6 +210,25 @@ export const providers = pgTable('providers', {
   groupPriorities: jsonb('group_priorities').$type<Record<string, number> | null>().default(null),
   costMultiplier: numeric('cost_multiplier', { precision: 10, scale: 4 }).default('1.0'),
   groupTag: varchar('group_tag', { length: 255 }),
+
+  // 上游计费系统：auto 兼容旧数据，显式类型避免误探测其他协议
+  upstreamBillingType: varchar('upstream_billing_type', { length: 20 })
+    .notNull()
+    .default('auto')
+    .$type<ProviderUpstreamBillingType>(),
+  upstreamBillingAccessToken: varchar('upstream_billing_access_token'),
+  upstreamBillingCookie: varchar('upstream_billing_cookie'),
+  upstreamBillingUserId: varchar('upstream_billing_user_id', { length: 128 }),
+  // 请求成功后最多每 10 分钟刷新一次；该字段控制定时兜底，0 表示关闭定时刷新。
+  upstreamBillingRefreshIntervalMinutes: integer('upstream_billing_refresh_interval_minutes')
+    .notNull()
+    .default(30),
+  upstreamBillingSnapshot: jsonb('upstream_billing_snapshot')
+    .$type<ProviderUpstreamBilling | null>()
+    .default(null),
+  upstreamBillingLastAttemptedAt: timestamp('upstream_billing_last_attempted_at', {
+    withTimezone: true,
+  }),
 
   // 供应商类型：扩展支持 5 种类型
   // - claude: Anthropic 提供商（标准认证）
@@ -355,7 +384,7 @@ export const providers = pgTable('providers', {
   // - 'disabled': force remove googleSearch tool from request
   geminiGoogleSearchPreference: varchar('gemini_google_search_preference', { length: 20 }),
 
-  // 废弃（保留向后兼容，但不再使用）
+  // Provider 上游智能调度限制；0 表示不限制。
   tpm: integer('tpm').default(0),
   rpm: integer('rpm').default(0),
   rpd: integer('rpd').default(0),
@@ -1026,6 +1055,25 @@ export const systemSettings = pgTable('system_settings', {
       maxFixSize: 1024 * 1024,
     }),
 
+  // ccLoad 兼容智能调度配置
+  smartDispatchConfig: jsonb('smart_dispatch_config')
+    .$type<SmartDispatchSettings>()
+    .notNull()
+    .default({
+      enabled: true,
+      healthScoreEnabled: false,
+      windowMinutes: 30,
+      minConfidentSample: 20,
+      successRatePenaltyWeight: 100,
+      enableTTFBScore: false,
+      ttfbPenaltyWeight: 20,
+      ttfbMaxSlowRatio: 2,
+      ttfbMinConfidentSample: 10,
+      cooldownBaseMs: 120000,
+      cooldownMaxMs: 1800000,
+      ewmaAlpha: 0.3,
+    }),
+
   // Quota lease settings
   quotaDbRefreshIntervalSeconds: integer('quota_db_refresh_interval_seconds').default(10),
   quotaLeasePercent5h: numeric('quota_lease_percent_5h', { precision: 5, scale: 4 }).default('0.05'),
@@ -1393,6 +1441,14 @@ export const providersRelations = relations(providers, ({ many, one }) => ({
     references: [providerVendors.id],
   }),
   messageRequests: many(messageRequest),
+  apiKeys: many(providerApiKeys),
+}));
+
+export const providerApiKeysRelations = relations(providerApiKeys, ({ one }) => ({
+  provider: one(providers, {
+    fields: [providerApiKeys.providerId],
+    references: [providers.id],
+  }),
 }));
 
 export const providerVendorsRelations = relations(providerVendors, ({ many }) => ({

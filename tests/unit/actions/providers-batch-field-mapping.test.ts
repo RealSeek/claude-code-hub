@@ -71,6 +71,20 @@ describe("batchUpdateProviders - advanced field mapping", () => {
     });
   });
 
+  it("maps provider RPM and concurrency limits to repository fields", async () => {
+    const { batchUpdateProviders } = await import("@/actions/providers");
+    const result = await batchUpdateProviders({
+      providerIds: [7, 8],
+      updates: { rpm_limit: 120, max_concurrency: 6 },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(updateProvidersBatchMock).toHaveBeenCalledWith([7, 8], {
+      rpm: 120,
+      cc: 6,
+    });
+  });
+
   it("should map model_redirects to repository modelRedirects", async () => {
     const redirects = [
       { matchType: "exact", source: "claude-3-opus", target: "claude-3.5-sonnet" },

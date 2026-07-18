@@ -5,6 +5,8 @@
   "nameRequired": "请输入服务商名称",
   "urlRequired": "请先填写服务商 URL",
   "keyRequired": "请输入 API 密钥",
+  "newApiCookieRequired": "请输入 New-API Session Cookie",
+  "newApiUserIdRequired": "请输入 New-API 用户 ID",
   "addFailed": "添加服务商失败",
   "updateFailed": "更新服务商失败",
   "deleteFailed": "删除服务商失败"

@@ -5,11 +5,16 @@ import {
   getProviderStatisticsAsync,
   getProviders,
   getProvidersHealthStatus,
+  getProviderUpstreamBillingBatch,
   type ProviderHealthStatus,
 } from "@/lib/api-client/v1/actions/providers";
 import { getSystemSettings } from "@/lib/api-client/v1/actions/system-config";
 import type { CurrencyCode } from "@/lib/utils/currency";
-import type { ProviderDisplay, ProviderStatisticsMap } from "@/types/provider";
+import type {
+  ProviderDisplay,
+  ProviderStatisticsMap,
+  ProviderUpstreamBillingMap,
+} from "@/types/provider";
 import type { User } from "@/types/user";
 import { AddProviderDialog } from "./add-provider-dialog";
 import { ProviderManager } from "./provider-manager";
@@ -32,6 +37,21 @@ function ProviderManagerLoaderContent({
     queryFn: getProviders,
     refetchOnWindowFocus: false,
     staleTime: 30_000,
+  });
+
+  const providerIds = providers
+    .filter((provider) => provider.isEnabled)
+    .map((provider) => provider.id);
+  const {
+    data: upstreamBilling = {} as ProviderUpstreamBillingMap,
+    isLoading: isUpstreamBillingLoading,
+  } = useQuery<ProviderUpstreamBillingMap>({
+    queryKey: ["providers-upstream-billing", providerIds],
+    queryFn: () => getProviderUpstreamBillingBatch(providerIds),
+    enabled: currentUser?.role === "admin" && providerIds.length > 0,
+    refetchOnWindowFocus: false,
+    staleTime: 120_000,
+    refetchInterval: 300_000,
   });
 
   const {
@@ -77,6 +97,8 @@ function ProviderManagerLoaderContent({
       healthStatus={healthStatus}
       statistics={statistics}
       statisticsLoading={isStatisticsLoading}
+      upstreamBilling={upstreamBilling}
+      upstreamBillingLoading={isUpstreamBillingLoading}
       currencyCode={currencyCode}
       enableMultiProviderTypes={enableMultiProviderTypes}
       loading={loading}

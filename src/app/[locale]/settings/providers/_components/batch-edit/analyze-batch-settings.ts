@@ -64,6 +64,8 @@ export interface BatchSettingsAnalysis {
     limitMonthlyUsd: FieldAnalysisResult<number | null>;
     limitTotalUsd: FieldAnalysisResult<number | null>;
     limitConcurrentSessions: FieldAnalysisResult<number | null>;
+    rpm: FieldAnalysisResult<number | null>;
+    cc: FieldAnalysisResult<number | null>;
   };
   circuitBreaker: {
     failureThreshold: FieldAnalysisResult<number | undefined>;
@@ -190,6 +192,8 @@ export function analyzeBatchProviderSettings(providers: ProviderDisplay[]): Batc
       limitMonthlyUsd: analyzeField(providers, (p) => p.limitMonthlyUsd ?? null),
       limitTotalUsd: analyzeField(providers, (p) => p.limitTotalUsd ?? null),
       limitConcurrentSessions: analyzeField(providers, (p) => p.limitConcurrentSessions ?? null),
+      rpm: analyzeField(providers, (p) => p.rpm ?? null),
+      cc: analyzeField(providers, (p) => p.cc ?? null),
     },
     circuitBreaker: {
       failureThreshold: analyzeField(providers, (p) => p.circuitBreakerFailureThreshold),

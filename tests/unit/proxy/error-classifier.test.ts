@@ -52,6 +52,25 @@ describe("ErrorClassifier - 状态码优先原则", () => {
   it("未知 4xx → Key 级（保守策略）", () => {
     expect(getErrorLevelFromStatus(450)).toBe(ErrorLevel.Key);
   });
+
+  it("400 默认按 Channel，明确 invalid API key 才按 Key", () => {
+    expect(classifyHTTPResponse(400, new Headers(), "bad request").level).toBe(ErrorLevel.Channel);
+    expect(classifyHTTPResponse(400, new Headers(), "invalid api key").level).toBe(ErrorLevel.Key);
+  });
+
+  it("404 默认按 Channel，model not found 按 Client", () => {
+    expect(classifyHTTPResponse(404, new Headers(), "route not found").level).toBe(ErrorLevel.Channel);
+    expect(classifyHTTPResponse(404, new Headers(), "model not found").level).toBe(ErrorLevel.Client);
+  });
+
+  it("597 根据 SSE 内部错误类型区分 Key 与 Channel", () => {
+    expect(
+      classifyHTTPResponse(597, new Headers(), 'data: {"type":"error","error":{"type":"rate_limit_error"}}\n\n').level
+    ).toBe(ErrorLevel.Key);
+    expect(
+      classifyHTTPResponse(597, new Headers(), 'data: {"type":"error","error":{"type":"api_error"}}\n\n').level
+    ).toBe(ErrorLevel.Channel);
+  });
 });
 
 describe("ErrorClassifier - 智能 429 限流分析", () => {
@@ -318,6 +337,110 @@ describe("ErrorClassifier - 综合场景测试", () => {
     // 语义分析：账户封禁 → Channel 级
     expect(result.level).toBe(ErrorLevel.Channel);
     expect(result.reason).toBe("account_suspended");
+  });
+
+  it("场景 3b: 401 + 'account has been suspended' → Channel 级", () => {
+    const result = classifyHTTPResponse(
+      401,
+      new Headers(),
+      JSON.stringify({ error: "Your account has been suspended" })
+    );
+
+    expect(result.level).toBe(ErrorLevel.Channel);
+    expect(result.reason).toBe("account_suspended");
+  });
+
+  it("场景 3c: reset_at 应进入分类结果和冷却建议", () => {
+    const resetAt = new Date(Date.now() + 60_000).toISOString();
+    const body = JSON.stringify({ error: { reset_at: resetAt } });
+    const result = classifyHTTPResponse(429, new Headers(), body);
+    const advice = generateCooldownAdvice(result, {} as any);
+
+    expect(result.resetAt).toBe(resetAt);
+    expect(advice?.cooldownUntil).toBe(resetAt);
+  });
+
+  it("场景 3d: ccLoad 结构化 reset_seconds 和相对 reset_time 应可解析", () => {
+    const secondsResult = parseResetTimeFromResponse(
+      JSON.stringify({ error: { reset_seconds: 90 } })
+    );
+    const durationResult = parseResetTimeFromResponse(
+      JSON.stringify({ error: { reset_time: "1h30m" } })
+    );
+
+    expect(secondsResult).not.toBeNull();
+    expect(durationResult).not.toBeNull();
+    expect(Date.parse(secondsResult!) - Date.now()).toBeGreaterThan(80_000);
+    expect(Date.parse(durationResult!) - Date.now()).toBeGreaterThan(5_000_000);
+  });
+
+  it("场景 3e: Retry-After HTTP-date 应按剩余时间分类并保留截止时间", () => {
+    const retryAt = new Date(Date.now() + 120_000).toUTCString();
+    const result = classifyHTTPResponse(429, new Headers({ "retry-after": retryAt }), null);
+
+    expect(result.level).toBe(ErrorLevel.Channel);
+    expect(result.channelCooldownSeconds).toBeGreaterThan(60);
+    expect(result.resetAt).not.toBeUndefined();
+  });
+
+  it("场景 3f: HTTP 200 的 1308 错误应触发精确 Key 冷却", () => {
+    const resetAt = new Date(Date.now() + 90_000);
+    const body = JSON.stringify({
+      type: "error",
+      error: {
+        type: "1308",
+        message: `usage limit resets at ${resetAt.toISOString().replace("T", " ").replace(".000Z", "")}`,
+      },
+    });
+    const result = classifyHTTPResponse(200, new Headers(), body);
+
+    expect(result.level).toBe(ErrorLevel.Key);
+    expect(result.reason).toBe("1308");
+    expect(result.resetAt).toBeDefined();
+  });
+
+  it("场景 3g: RESOURCE_EXHAUSTED 的 retry in 应转换为 Key 冷却", () => {
+    const result = classifyHTTPResponse(
+      429,
+      new Headers(),
+      JSON.stringify({
+        error: {
+          status: "RESOURCE_EXHAUSTED",
+          message: "Please retry in 2.5s",
+        },
+      })
+    );
+
+    expect(result.level).toBe(ErrorLevel.Key);
+    expect(result.reason).toBe("RESOURCE_EXHAUSTED_RETRY_IN");
+    expect(result.keyCooldownSeconds).toBe(3);
+  });
+
+  it("场景 3h: USAGE_LIMIT_REACHED 无重置字段时使用保守默认冷却", () => {
+    const result = classifyHTTPResponse(
+      200,
+      new Headers(),
+      JSON.stringify({ code: "USAGE_LIMIT_REACHED", message: "usage limit reached" })
+    );
+
+    expect(result.level).toBe(ErrorLevel.Key);
+    expect(result.reason).toBe("USAGE_LIMIT_REACHED");
+    expect(result.keyCooldownSeconds).toBe(1800);
+  });
+
+  it("场景 3i: 全局固定窗口配额应冷却整个 Provider", () => {
+    const result = classifyHTTPResponse(
+      429,
+      new Headers(),
+      JSON.stringify({
+        code: "GLOBAL_FIXED_WINDOW_QUOTA_EXHAUSTED",
+        message: "Please retry today 23:59",
+      })
+    );
+
+    expect(result.level).toBe(ErrorLevel.Channel);
+    expect(result.reason).toBe("GLOBAL_FIXED_WINDOW_QUOTA_EXHAUSTED");
+    expect(result.resetAt).toBeDefined();
   });
 
   it("场景 4: 500 Internal Server Error → Channel 级", () => {

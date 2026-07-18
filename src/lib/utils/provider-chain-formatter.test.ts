@@ -209,6 +209,7 @@ describe("endpoint_pool_exhausted", () => {
                 id: 1,
                 name: "low-weight-provider",
                 weight: 1,
+                effectiveWeight: 3,
                 costMultiplier: 1,
                 probability: 1 / 22,
               },
@@ -227,6 +228,7 @@ describe("endpoint_pool_exhausted", () => {
       const { timeline } = formatProviderTimeline(chain, mockT);
 
       expect(timeline).toContain("name=low-weight-provider");
+      expect(timeline).toContain("weight=3");
       expect(timeline).toContain("probability=4.5%");
       expect(timeline).toContain("name=high-weight-provider");
       expect(timeline).toContain("probability=45.5%");

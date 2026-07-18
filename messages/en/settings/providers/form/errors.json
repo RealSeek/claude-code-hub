@@ -3,6 +3,8 @@
   "deleteFailed": "Failed to delete provider",
   "groupTagTooLong": "Provider group tags are too long (max {max} chars total)",
   "keyRequired": "Please enter an API key",
+  "newApiCookieRequired": "Please enter the New-API session cookie",
+  "newApiUserIdRequired": "Please enter the New-API user ID",
   "nameRequired": "Please enter a provider name",
   "invalidUrl": "Please enter a valid API address",
   "urlRequired": "Please enter an API address",

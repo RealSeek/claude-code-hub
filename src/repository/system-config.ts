@@ -9,6 +9,7 @@ import { DEFAULT_SITE_TITLE } from "@/lib/site-title";
 import { REPLAY_CACHE_TTL_MINUTES_DEFAULT } from "@/lib/validation/replay-settings";
 import {
   DEFAULT_FAKE_STREAMING_WHITELIST,
+  DEFAULT_SMART_DISPATCH_SETTINGS,
   type SystemSettings,
   type UpdateSystemSettingsInput,
 } from "@/types/system-config";
@@ -184,6 +185,7 @@ function createFallbackSettings(): SystemSettings {
       maxJsonDepth: 200,
       maxFixSize: 1024 * 1024,
     },
+    smartDispatchConfig: { ...DEFAULT_SMART_DISPATCH_SETTINGS },
     quotaDbRefreshIntervalSeconds: 10,
     quotaLeasePercent5h: 0.05,
     quotaLeasePercentDaily: 0.05,
@@ -847,6 +849,16 @@ export async function updateSystemSettings(
         ...current.responseFixerConfig,
         ...payload.responseFixerConfig,
       };
+    }
+    if (payload.smartDispatchConfig !== undefined) {
+      const smartDispatchConfig = {
+        ...current.smartDispatchConfig,
+        ...payload.smartDispatchConfig,
+      };
+      if (smartDispatchConfig.cooldownBaseMs > smartDispatchConfig.cooldownMaxMs) {
+        throw new Error("智能调度基础冷却时间不能大于最大冷却时间");
+      }
+      updates.smartDispatchConfig = smartDispatchConfig;
     }
 
     // Quota lease settings（如果提供）

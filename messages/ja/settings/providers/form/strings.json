@@ -182,7 +182,7 @@
   "websiteUrlInvalid": "有効なプロバイダー公式サイト URL を入力してください",
   "websiteUrlPlaceholder": "https://example.com",
   "weight": "重み",
-  "weightDesc": "加重ランダム確率。同じ優先度内では、重みが高いほど選択される確率が高くなります。",
+  "weightDesc": "基本ウェイト。同じスマートスコア層では、実効ウェイト = 基本ウェイト × 現在利用可能な Key 数となり、Key のクールダウン時はトラフィックが自動的に減少します。",
   "weightLabel": "重み",
   "weightPlaceholder": "1"
 }

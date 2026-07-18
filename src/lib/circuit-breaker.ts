@@ -28,6 +28,13 @@ import {
   saveCircuitState,
 } from "@/lib/redis/circuit-breaker-state";
 import { publishCacheInvalidation, subscribeCacheInvalidation } from "@/lib/redis/pubsub";
+import {
+  areAllProviderApiKeysCooled,
+  providerApiKeyCount,
+  recordProviderApiKeyFailure,
+} from "@/lib/provider-key-dispatch";
+import { recordSmartProviderFailure, recordSmartProviderSuccess } from "@/lib/smart-dispatch";
+import type { Provider } from "@/types/provider";
 
 // 修复：导出 ProviderHealth 类型，供其他模块使用
 export interface ProviderHealth {
@@ -481,7 +488,74 @@ export async function isCircuitOpen(providerId: number): Promise<boolean> {
 /**
  * 记录请求失败
  */
-export async function recordFailure(providerId: number, error: Error): Promise<void> {
+export interface ProviderFailureContext {
+  statusCode?: number;
+  headers?: Headers | Record<string, string>;
+  body?: string | null;
+  providerKeyId?: number | null;
+  provider?: Provider;
+  providerKeyFailureAlreadyRecorded?: boolean;
+}
+
+export async function recordFailure(
+  providerId: number,
+  error: Error,
+  failureContext?: ProviderFailureContext
+): Promise<void> {
+  let requestedCooldownUntil: number | undefined;
+  let keyLevelFailure = false;
+  try {
+    const upstreamError = (
+      error as Error & {
+        statusCode?: number;
+        upstreamError?: { body?: string; headers?: Record<string, string> };
+      }
+    ).upstreamError;
+    const statusCode = failureContext?.statusCode ??
+      (error as Error & { statusCode?: number }).statusCode;
+    const body = failureContext?.body ?? upstreamError?.body ?? null;
+    const headersInput = failureContext?.headers ?? upstreamError?.headers;
+    if ((headersInput || body) && Number.isFinite(statusCode)) {
+      const { classifyHTTPResponse, generateCooldownAdvice } = await import(
+        "@/app/v1/_lib/proxy/error-classifier"
+      );
+      const headers = new Headers();
+      if (headersInput instanceof Headers) {
+        headersInput.forEach((value, key) => headers.set(key, value));
+      } else {
+        for (const [key, value] of Object.entries(headersInput ?? {})) {
+          headers.set(key, value);
+        }
+      }
+      const classification = classifyHTTPResponse(statusCode!, headers, body);
+      keyLevelFailure = classification.level === "key";
+      const advice = generateCooldownAdvice(classification, {} as never);
+      if (advice?.shouldCooldown) {
+        const timestamp = Date.parse(advice.cooldownUntil);
+        if (Number.isFinite(timestamp) && timestamp > Date.now()) {
+          requestedCooldownUntil = timestamp;
+        }
+      }
+    }
+  } catch {
+    // 分类失败时继续使用本地指数退避，不能影响原有熔断流程。
+  }
+
+  if (
+    keyLevelFailure &&
+    failureContext?.providerKeyId != null &&
+    failureContext.provider &&
+    providerApiKeyCount(failureContext.provider) > 1
+  ) {
+    if (!failureContext.providerKeyFailureAlreadyRecorded) {
+      recordProviderApiKeyFailure(failureContext.providerKeyId, requestedCooldownUntil);
+    }
+    if (!areAllProviderApiKeysCooled(failureContext.provider)) {
+      return;
+    }
+  }
+
+  recordSmartProviderFailure(providerId, requestedCooldownUntil);
   const health = await getOrCreateHealth(providerId);
   const config = await getProviderConfigForHealth(providerId, health);
 
@@ -609,7 +683,12 @@ async function triggerCircuitBreakerAlert(
 /**
  * 记录请求成功
  */
-export async function recordSuccess(providerId: number): Promise<void> {
+export async function recordSuccess(
+  providerId: number,
+  ttfbMs?: number | null,
+  requestStartedAt?: number
+): Promise<void> {
+  recordSmartProviderSuccess(providerId, ttfbMs, requestStartedAt);
   const health = await getOrCreateHealth(providerId);
   const config = await getProviderConfigForHealth(providerId, health);
   let stateChanged = false;

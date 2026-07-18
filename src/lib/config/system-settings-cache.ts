@@ -104,6 +104,7 @@ export const DEFAULT_SETTINGS: Pick<
   | "enableClaudeMetadataUserIdInjection"
   | "enableResponseFixer"
   | "responseFixerConfig"
+  | "smartDispatchConfig"
   | "passThroughUpstreamErrorMessage"
   | "publicStatusWindowHours"
   | "publicStatusAggregationIntervalMinutes"
@@ -145,6 +146,7 @@ export const DEFAULT_SETTINGS: Pick<
     maxJsonDepth: 200,
     maxFixSize: 1024 * 1024,
   },
+  smartDispatchConfig: { ...DEFAULT_SMART_DISPATCH_SETTINGS },
   publicStatusWindowHours: 24,
   publicStatusAggregationIntervalMinutes: 5,
   streamGateMode: "enforce",
@@ -236,6 +238,7 @@ export async function getCachedSystemSettings(): Promise<SystemSettings> {
       enableClaudeMetadataUserIdInjection: DEFAULT_SETTINGS.enableClaudeMetadataUserIdInjection,
       enableResponseFixer: DEFAULT_SETTINGS.enableResponseFixer,
       responseFixerConfig: DEFAULT_SETTINGS.responseFixerConfig,
+      smartDispatchConfig: DEFAULT_SETTINGS.smartDispatchConfig,
       publicStatusWindowHours: DEFAULT_SETTINGS.publicStatusWindowHours,
       publicStatusAggregationIntervalMinutes:
         DEFAULT_SETTINGS.publicStatusAggregationIntervalMinutes,

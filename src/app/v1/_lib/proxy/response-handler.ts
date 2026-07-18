@@ -12,6 +12,8 @@ import { emitProxyLangfuseTrace } from "@/lib/langfuse/emit-proxy-trace";
 import { logger } from "@/lib/logger";
 import { recordDiscoveryControlEvent } from "@/lib/observability/discovery-metrics";
 import { requestCloudPriceTableSync } from "@/lib/price-sync/cloud-price-updater";
+import { recordProviderApiKeySuccess } from "@/lib/provider-key-dispatch";
+import { triggerProviderUpstreamBillingRefresh } from "@/lib/provider-upstream-billing-request-trigger";
 import { ProxyStatusTracker } from "@/lib/proxy-status-tracker";
 import { RateLimitService } from "@/lib/rate-limit";
 import type { SessionBindingSnapshot } from "@/lib/redis/session-binding";
@@ -6480,6 +6482,10 @@ export async function finalizeRequestStats(
     if (session.shouldTrackSessionObservability()) {
       void session.closeLiveObservability();
     }
+  }
+
+  if (statusCode >= 200 && statusCode < 300) {
+    triggerProviderUpstreamBillingRefresh(providerIdForPersistence ?? null);
   }
 
   return normalizedUsage;

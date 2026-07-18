@@ -177,6 +177,7 @@ import { ProxySession } from "@/app/v1/_lib/proxy/session";
 import { peekDeferredStreamingFinalization } from "@/app/v1/_lib/proxy/stream-finalization";
 import { DbPoolAdmissionError } from "@/drizzle/admitted-client";
 import { logger } from "@/lib/logger";
+import { resetProviderKeyDispatchState } from "@/lib/provider-key-dispatch";
 import type { Provider } from "@/types/provider";
 import type { SystemSettings } from "@/types/system-config";
 
@@ -192,6 +193,8 @@ function createProvider(overrides: Partial<Provider> = {}): Provider {
     name: "p1",
     url: "https://provider.example.com",
     key: "k",
+    keyStrategy: "round_robin",
+    apiKeys: [],
     providerVendorId: null,
     isEnabled: true,
     weight: 1,

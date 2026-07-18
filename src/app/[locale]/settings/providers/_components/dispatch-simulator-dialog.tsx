@@ -406,7 +406,11 @@ export function DispatchSimulatorDialog({ providers }: DispatchSimulatorDialogPr
                                     </Badge>
                                   </div>
                                   <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                                    <span>{t("weightLabel", { weight: provider.weight })}</span>
+                                    <span>
+                                      {t("weightLabel", {
+                                        weight: provider.effectiveWeight ?? provider.weight,
+                                      })}
+                                    </span>
                                     <Badge variant="outline">
                                       {provider.weightPercent.toFixed(1)}%
                                     </Badge>

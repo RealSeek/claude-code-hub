@@ -142,6 +142,50 @@ describe("createInitialState - batch mode", () => {
   });
 });
 
+describe("createInitialState - New-API 账户凭据", () => {
+  it("编辑时回填用户 ID 但绝不回填 Session Cookie", () => {
+    const state = createInitialState("edit", {
+      id: 7,
+      name: "New-API",
+      url: "https://gateway.example.com",
+      upstreamBillingType: "new-api",
+      hasUpstreamBillingAccessToken: true,
+      hasUpstreamBillingCookie: true,
+      upstreamBillingUserId: "42",
+    } as Parameters<typeof createInitialState>[1]);
+
+    expect(state.basic.upstreamBillingType).toBe("new-api");
+    expect(state.basic.upstreamBillingUserId).toBe("42");
+    expect(state.basic.upstreamBillingCookie).toBe("");
+  });
+
+  it("reducer 可以分别更新 Session Cookie 和用户 ID", () => {
+    const initial = createInitialState("create");
+    const withToken = providerFormReducer(initial, {
+      type: "SET_UPSTREAM_BILLING_COOKIE",
+      payload: "session=test-cookie",
+    });
+    const withUserId = providerFormReducer(withToken, {
+      type: "SET_UPSTREAM_BILLING_USER_ID",
+      payload: "42",
+    });
+
+    expect(withUserId.basic.upstreamBillingCookie).toBe("session=test-cookie");
+    expect(withUserId.basic.upstreamBillingUserId).toBe("42");
+  });
+
+  it("主动更新间隔默认 30 分钟并可设置为 0", () => {
+    const initial = createInitialState("create");
+    expect(initial.basic.upstreamBillingRefreshIntervalMinutes).toBe(30);
+
+    const disabled = providerFormReducer(initial, {
+      type: "SET_UPSTREAM_BILLING_REFRESH_INTERVAL_MINUTES",
+      payload: 0,
+    });
+    expect(disabled.basic.upstreamBillingRefreshIntervalMinutes).toBe(0);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // providerFormReducer - SET_BATCH_IS_ENABLED
 // ---------------------------------------------------------------------------

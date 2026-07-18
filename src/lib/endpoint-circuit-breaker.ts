@@ -9,6 +9,7 @@ import {
   loadEndpointCircuitStates,
   saveEndpointCircuitState,
 } from "@/lib/redis/endpoint-circuit-breaker-state";
+import { recordSmartEndpointFailure, recordSmartEndpointSuccess } from "@/lib/smart-dispatch";
 
 export interface EndpointCircuitBreakerConfig {
   failureThreshold: number;
@@ -331,7 +332,12 @@ export async function isEndpointCircuitOpen(endpointId: number): Promise<boolean
   return false;
 }
 
-export async function recordEndpointFailure(endpointId: number, error: Error): Promise<void> {
+export async function recordEndpointFailure(
+  endpointId: number,
+  error: Error,
+  requestedCooldownUntil?: number
+): Promise<void> {
+  recordSmartEndpointFailure(endpointId, requestedCooldownUntil);
   const { getEnvConfig } = await import("@/lib/config/env.schema");
   if (!getEnvConfig().ENABLE_ENDPOINT_CIRCUIT_BREAKER) {
     return;
@@ -347,7 +353,10 @@ export async function recordEndpointFailure(endpointId: number, error: Error): P
     if (health.circuitState !== "open") {
       // Only set timer and alert on initial transition (closed->open or half-open->open)
       health.circuitState = "open";
-      health.circuitOpenUntil = Date.now() + config.openDuration;
+      health.circuitOpenUntil = Math.max(
+        Date.now() + config.openDuration,
+        requestedCooldownUntil ?? 0
+      );
       health.halfOpenSuccessCount = 0;
 
       const retryAt = new Date(health.circuitOpenUntil).toISOString();
@@ -379,7 +388,12 @@ export async function recordEndpointFailure(endpointId: number, error: Error): P
   persistStateToRedis(endpointId, health);
 }
 
-export async function recordEndpointSuccess(endpointId: number): Promise<void> {
+export async function recordEndpointSuccess(
+  endpointId: number,
+  latencyMs?: number,
+  requestStartedAt?: number
+): Promise<void> {
+  recordSmartEndpointSuccess(endpointId, latencyMs, requestStartedAt);
   const { getEnvConfig } = await import("@/lib/config/env.schema");
   if (!getEnvConfig().ENABLE_ENDPOINT_CIRCUIT_BREAKER) {
     return;

@@ -95,8 +95,12 @@ export function apiPost<T = any>(
   return apiClient.post<T>(path, body, options);
 }
 
-export function apiPut<T = any>(path: string, body?: unknown): Promise<T> {
-  return apiClient.put<T>(path, body);
+export function apiPut<T = any>(
+  path: string,
+  body?: unknown,
+  options?: Parameters<typeof apiClient.put>[2]
+): Promise<T> {
+  return options === undefined ? apiClient.put<T>(path, body) : apiClient.put<T>(path, body, options);
 }
 
 export function apiPatch<T = any>(

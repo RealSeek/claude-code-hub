@@ -30,12 +30,32 @@ export const ProviderSummarySchema = z
     name: z.string().describe("Provider display name."),
     url: z.string().url().describe("Provider upstream base URL."),
     maskedKey: z.string().describe("Masked provider API key."),
+    keyStrategy: z
+      .enum(["sequential", "round_robin"])
+      .describe("Provider API key selection strategy."),
+    apiKeyCount: z.number().int().nonnegative().describe("Number of enabled provider API keys."),
     isEnabled: z.boolean().describe("Whether the provider is enabled."),
     weight: z.number().describe("Provider routing weight."),
     priority: z.number().int().describe("Provider routing priority."),
     groupPriorities: z.record(z.string(), z.number()).nullable().describe("Per-group priorities."),
     costMultiplier: z.number().describe("Provider cost multiplier."),
     groupTag: NullableStringSchema.describe("Provider group tag."),
+    upstreamBillingType: z
+      .enum(["auto", "new-api", "sub2api"])
+      .describe("Upstream billing system used for balance and multiplier probes."),
+    hasUpstreamBillingAccessToken: z
+      .boolean()
+      .describe("Whether a write-only New-API account access token is configured."),
+    hasUpstreamBillingCookie: z
+      .boolean()
+      .describe("Whether a write-only New-API session cookie is configured."),
+    upstreamBillingUserId: NullableStringSchema.describe("New-API account user id."),
+    upstreamBillingRefreshIntervalMinutes: z
+      .number()
+      .int()
+      .min(0)
+      .max(10080)
+      .describe("Scheduled upstream billing refresh interval in minutes; zero disables it."),
     providerType: ProviderTypeSchema,
     providerVendorId: z.number().int().nullable().describe("Provider vendor id."),
     preserveClientIp: z.boolean().describe("Whether client IP is preserved upstream."),
@@ -58,6 +78,18 @@ export const ProviderSummarySchema = z
     limitTotalUsd: z.number().nullable().describe("Total cost limit in USD."),
     totalCostResetAt: NullableStringSchema.describe("Total cost reset timestamp."),
     limitConcurrentSessions: z.number().int().describe("Concurrent session limit."),
+    rpmLimit: z
+      .number()
+      .int()
+      .nonnegative()
+      .nullable()
+      .describe("Provider requests per minute; 0 or null disables the limit."),
+    maxConcurrency: z
+      .number()
+      .int()
+      .nonnegative()
+      .nullable()
+      .describe("Provider in-flight upstream request limit; 0 or null disables the limit."),
     maxRetryAttempts: z.number().int().nullable().describe("Max retry attempts."),
     circuitBreakerFailureThreshold: z
       .number()
@@ -174,6 +206,103 @@ export const ProviderKeyRevealResponseSchema = z.object({
   key: z.string().describe("Unmasked provider API key. Returned only to admin callers."),
 });
 
+export const ProviderApiKeySummarySchema = z.object({
+  id: z.number().int().nullable(),
+  label: z.string().nullable(),
+  maskedKey: z.string(),
+  isEnabled: z.boolean(),
+  sortOrder: z.number().int(),
+});
+
+export const ProviderApiKeysResponseSchema = z.object({
+  strategy: z.enum(["sequential", "round_robin"]),
+  keys: z.array(ProviderApiKeySummarySchema),
+});
+
+export const ProviderApiKeysRevealResponseSchema = z.object({
+  strategy: z.enum(["sequential", "round_robin"]),
+  keys: z.array(
+    z.object({
+      id: z.number().int().nullable(),
+      label: z.string().nullable(),
+      key: z.string(),
+      isEnabled: z.boolean(),
+      sortOrder: z.number().int(),
+    })
+  ),
+});
+
+export const ProviderApiKeysUpdateSchema = z
+  .object({
+    key_strategy: z.enum(["sequential", "round_robin"]).optional(),
+    api_keys: z
+      .array(
+        z
+          .object({
+            id: z.number().int().positive().optional(),
+            key: z.string().min(1).max(PROVIDER_KEY_MAX_LENGTH).optional(),
+            label: z.string().max(100).nullable().optional(),
+            is_enabled: z.boolean().optional(),
+            sort_order: z.number().int().min(0).optional(),
+          })
+          .strict()
+      )
+      .min(0)
+      .max(100)
+      .superRefine((keys, ctx) => {
+        keys.forEach((key, index) => {
+          if (key.id === undefined && key.key === undefined) {
+            ctx.addIssue({
+              code: "custom",
+              path: [index, "key"],
+              message: "New provider API keys must include key.",
+            });
+          }
+        });
+      }),
+  })
+  .strict();
+
+export const ProviderUpstreamBillingKeySchema = z.object({
+  keyId: z.number().int().nullable(),
+  keyLabel: z.string().nullable(),
+  source: z.enum(["new-api", "sub2api"]).nullable(),
+  status: z.enum(["ok", "partial", "unsupported", "error"]),
+  balanceUsd: z.number().nullable(),
+  balanceRaw: z.number().nullable(),
+  balanceScope: z.enum(["key", "account"]).nullable().optional(),
+  quotaPerUnit: z.number().nullable(),
+  effectiveMultiplier: z.number().nullable(),
+  observedAt: z.string(),
+  errorCode: z.string().nullable(),
+});
+
+export const ProviderUpstreamBillingResultSchema = z.object({
+  providerId: z.number().int(),
+  source: z.enum(["new-api", "sub2api"]).nullable(),
+  status: z.enum(["ok", "partial", "unsupported", "error"]),
+  balanceUsd: z.number().nullable(),
+  balanceRaw: z.number().nullable(),
+  balanceScope: z.enum(["key", "account"]).nullable().optional(),
+  quotaPerUnit: z.number().nullable(),
+  effectiveMultiplier: z.number().nullable(),
+  observedAt: z.string(),
+  errorCode: z.string().nullable(),
+  balanceAggregation: z.enum(["single_key", "sum_of_keys", "unavailable"]).optional(),
+  successfulKeyCount: z.number().int().nonnegative().optional(),
+  failedKeyCount: z.number().int().nonnegative().optional(),
+  keys: z.array(ProviderUpstreamBillingKeySchema).optional(),
+});
+
+export const ProviderUpstreamBillingArrayResponseSchema = z.object({
+  items: z.array(ProviderUpstreamBillingResultSchema),
+});
+
+export const ProviderCostMultiplierSyncResponseSchema = ProviderUpstreamBillingResultSchema.extend({
+  previousMultiplier: z.number(),
+  synced: z.boolean(),
+});
+
 export const ProviderGenericResponseSchema = z
   .record(z.string(), z.unknown())
   .describe("Provider action response object.");
@@ -213,6 +342,22 @@ const ProviderBatchUpdateFieldsSchema = z
     limit_daily_usd: z.number().min(0).nullable().optional().describe("Daily USD limit."),
     daily_reset_mode: z.enum(["fixed", "rolling"]).optional().describe("Daily reset mode."),
     daily_reset_time: z.string().optional().describe("Daily reset time."),
+    rpm_limit: z
+      .number()
+      .int()
+      .min(0)
+      .max(1_000_000)
+      .nullable()
+      .optional()
+      .describe("Provider requests per minute."),
+    max_concurrency: z
+      .number()
+      .int()
+      .min(0)
+      .max(100_000)
+      .nullable()
+      .optional()
+      .describe("Provider in-flight upstream request limit."),
     codex_image_generation_preference: CodexImageGenerationPreferenceSchema.nullable()
       .optional()
       .describe("Codex image generation tool preference."),
@@ -355,12 +500,70 @@ export const ProviderCreateSchema = z
   .object({
     name: z.string().trim().min(1).max(64).describe("Provider display name."),
     url: z.string().trim().url().max(255).describe("Provider upstream base URL."),
-    key: z.string().min(1).max(PROVIDER_KEY_MAX_LENGTH).describe("Provider API key. Write-only."),
+    key: z
+      .string()
+      .min(1)
+      .max(PROVIDER_KEY_MAX_LENGTH)
+      .optional()
+      .describe("Legacy provider API key. Write-only; api_keys may be used instead."),
+    key_strategy: z
+      .enum(["sequential", "round_robin"])
+      .optional()
+      .describe("Provider API key selection strategy."),
+    api_keys: z
+      .array(
+        z
+          .object({
+            key: z.string().min(1).max(PROVIDER_KEY_MAX_LENGTH),
+            label: z.string().max(100).nullable().optional(),
+            is_enabled: z.boolean().optional(),
+            sort_order: z.number().int().min(0).optional(),
+          })
+          .strict()
+      )
+      .min(1)
+      .max(100)
+      .optional()
+      .describe("Provider API key pool. Write-only."),
     is_enabled: z.boolean().optional().describe("Whether the provider is enabled."),
     weight: z.number().int().min(1).max(100).optional().describe("Provider routing weight."),
     priority: z.number().int().min(0).optional().describe("Provider routing priority."),
     cost_multiplier: z.number().min(0).optional().describe("Provider cost multiplier."),
     group_tag: z.string().max(255).nullable().optional().describe("Provider group tag."),
+    upstream_billing_type: z
+      .enum(["auto", "new-api", "sub2api"])
+      .optional()
+      .default("auto")
+      .describe("Upstream billing system used for balance and multiplier probes."),
+    upstream_billing_access_token: z
+      .string()
+      .trim()
+      .min(1)
+      .max(PROVIDER_KEY_MAX_LENGTH)
+      .optional()
+      .describe("New-API account access token. Write-only."),
+    upstream_billing_cookie: z
+      .string()
+      .trim()
+      .min(1)
+      .max(PROVIDER_KEY_MAX_LENGTH)
+      .optional()
+      .describe("New-API session cookie. Write-only."),
+    upstream_billing_user_id: z
+      .string()
+      .trim()
+      .min(1)
+      .max(128)
+      .optional()
+      .describe("New-API account user id."),
+    upstream_billing_refresh_interval_minutes: z.coerce
+      .number()
+      .int()
+      .min(0)
+      .max(10080)
+      .optional()
+      .default(30)
+      .describe("Scheduled upstream billing refresh interval in minutes; zero disables it."),
     group_priorities: z
       .record(z.string(), z.number().int().min(0))
       .nullable()
@@ -410,6 +613,22 @@ export const ProviderCreateSchema = z
       .min(0)
       .optional()
       .describe("Concurrent session limit."),
+    rpm_limit: z
+      .number()
+      .int()
+      .min(0)
+      .max(1_000_000)
+      .nullable()
+      .optional()
+      .describe("Provider requests per minute."),
+    max_concurrency: z
+      .number()
+      .int()
+      .min(0)
+      .max(100_000)
+      .nullable()
+      .optional()
+      .describe("Provider in-flight upstream request limit."),
     max_retry_attempts: z
       .number()
       .int()
@@ -517,7 +736,55 @@ export const ProviderUpdateSchema = ProviderCreateSchema.omit({ key: true })
       .max(PROVIDER_KEY_MAX_LENGTH)
       .optional()
       .describe("Provider API key. Write-only."),
+    key_strategy: z
+      .enum(["sequential", "round_robin"])
+      .optional()
+      .describe("Provider API key selection strategy."),
+    api_keys: z
+      .array(
+        z
+          .object({
+            id: z.number().int().positive().optional(),
+            key: z.string().min(1).max(PROVIDER_KEY_MAX_LENGTH).optional(),
+            label: z.string().max(100).nullable().optional(),
+            is_enabled: z.boolean().optional(),
+            sort_order: z.number().int().min(0).optional(),
+          })
+          .strict()
+      )
+      .min(0)
+      .max(100)
+      .superRefine((keys, ctx) => {
+        keys.forEach((key, index) => {
+          if (key.id === undefined && key.key === undefined) {
+            ctx.addIssue({
+              code: "custom",
+              path: [index, "key"],
+              message: "New provider API keys must include key.",
+            });
+          }
+        });
+      })
+      .optional()
+      .describe("Provider API key pool. Write-only."),
     provider_type: ProviderTypeSchema.optional(),
+    upstream_billing_type: z.enum(["auto", "new-api", "sub2api"]).optional(),
+    upstream_billing_access_token: z
+      .string()
+      .trim()
+      .min(1)
+      .max(PROVIDER_KEY_MAX_LENGTH)
+      .optional()
+      .describe("New-API account access token. Write-only; omit to preserve the current value."),
+    upstream_billing_cookie: z
+      .string()
+      .trim()
+      .min(1)
+      .max(PROVIDER_KEY_MAX_LENGTH)
+      .optional()
+      .describe("New-API session cookie. Write-only; omit to preserve the current value."),
+    upstream_billing_user_id: z.string().trim().min(1).max(128).nullable().optional(),
+    upstream_billing_refresh_interval_minutes: z.coerce.number().int().min(0).max(10080).optional(),
   })
   .partial()
   .strict()
