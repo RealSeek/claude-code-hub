@@ -25,6 +25,8 @@ function toProviderGroup(row: ProviderGroupRow): ProviderGroup {
     id: row.id,
     name: row.name,
     costMultiplier: Number(row.costMultiplier),
+    maxUpstreamMultiplier:
+      row.maxUpstreamMultiplier == null ? null : Number(row.maxUpstreamMultiplier),
     description: row.description ?? null,
     createdAt: row.createdAt!,
     updatedAt: row.updatedAt!,
@@ -37,8 +39,14 @@ function toProviderGroup(row: ProviderGroupRow): ProviderGroup {
 
 const CACHE_TTL_MS = 60_000; // 60 seconds
 
+export interface GroupBillingPolicy {
+  groupName: string | null;
+  costMultiplier: number;
+  maxUpstreamMultiplier: number | null;
+}
+
 interface CacheEntry {
-  value: number;
+  value: GroupBillingPolicy;
   expiresAt: number;
 }
 
@@ -113,6 +121,7 @@ export async function createProviderGroup(input: CreateProviderGroupInput): Prom
     .values({
       name: input.name,
       costMultiplier: input.costMultiplier?.toString() ?? "1.0",
+      maxUpstreamMultiplier: input.maxUpstreamMultiplier?.toString() ?? null,
       description: input.description ?? null,
     })
     .returning();
@@ -136,6 +145,9 @@ export async function updateProviderGroup(
 
   if (input.costMultiplier !== undefined) {
     setData.costMultiplier = input.costMultiplier.toString();
+  }
+  if (input.maxUpstreamMultiplier !== undefined) {
+    setData.maxUpstreamMultiplier = input.maxUpstreamMultiplier?.toString() ?? null;
   }
   if (input.description !== undefined) {
     setData.description = input.description;
@@ -243,7 +255,7 @@ export async function deleteProviderGroup(id: number): Promise<void> {
  * on one node will not invalidate other nodes' caches; worst-case staleness
  * is bounded by CACHE_TTL_MS.
  */
-export async function getGroupCostMultiplier(rawGroupString: string): Promise<number> {
+export async function getGroupBillingPolicy(rawGroupString: string): Promise<GroupBillingPolicy> {
   const now = Date.now();
 
   // Cache hit fast-path: we key the cache on the raw input string so that
@@ -258,24 +270,28 @@ export async function getGroupCostMultiplier(rawGroupString: string): Promise<nu
 
   const parsedGroups = parseProviderGroups(rawGroupString);
   if (parsedGroups.length === 0) {
-    return 1.0;
+    return { groupName: null, costMultiplier: 1.0, maxUpstreamMultiplier: null };
   }
 
   const rows = await db
     .select({
       name: providerGroups.name,
       costMultiplier: providerGroups.costMultiplier,
+      maxUpstreamMultiplier: providerGroups.maxUpstreamMultiplier,
     })
     .from(providerGroups)
     .where(inArray(providerGroups.name, parsedGroups));
 
-  const multiplierByName = new Map(rows.map((row) => [row.name, Number(row.costMultiplier)]));
-
-  let resolved: number | null = null;
+  let resolved: GroupBillingPolicy | null = null;
   for (const name of parsedGroups) {
-    const multiplier = multiplierByName.get(name);
-    if (multiplier !== undefined) {
-      resolved = multiplier;
+    const row = rows.find((candidate) => candidate.name === name);
+    if (row) {
+      resolved = {
+        groupName: row.name,
+        costMultiplier: Number(row.costMultiplier),
+        maxUpstreamMultiplier:
+          row.maxUpstreamMultiplier === null ? null : Number(row.maxUpstreamMultiplier),
+      };
       break;
     }
   }
@@ -290,5 +306,9 @@ export async function getGroupCostMultiplier(rawGroupString: string): Promise<nu
     return resolved;
   }
 
-  return 1.0;
+  return { groupName: null, costMultiplier: 1.0, maxUpstreamMultiplier: null };
+}
+
+export async function getGroupCostMultiplier(rawGroupString: string): Promise<number> {
+  return (await getGroupBillingPolicy(rawGroupString)).costMultiplier;
 }

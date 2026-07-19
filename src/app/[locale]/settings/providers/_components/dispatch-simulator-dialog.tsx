@@ -337,7 +337,9 @@ export function DispatchSimulatorDialog({ providers }: DispatchSimulatorDialogPr
                                     </div>
                                     {provider.details ? (
                                       <p className="mt-2 text-xs text-muted-foreground">
-                                        {provider.details}
+                                        {provider.details === "group_cost_multiplier_exceeded"
+                                          ? t("details.groupCostMultiplierExceeded")
+                                          : provider.details}
                                       </p>
                                     ) : null}
                                   </div>

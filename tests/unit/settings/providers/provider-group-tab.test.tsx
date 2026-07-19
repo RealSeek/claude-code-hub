@@ -129,6 +129,7 @@ beforeEach(async () => {
         id: 11,
         name: "premium",
         costMultiplier: 1.5,
+        maxUpstreamMultiplier: 1.2,
         description: "Priority group",
         providerCount: 1,
       },
@@ -175,6 +176,7 @@ describe("ProviderGroupTab", () => {
 
     expect(onRequestEditProvider).toHaveBeenCalledWith(1);
     expect(container.textContent).toContain("providerType");
+    expect(container.textContent).toContain("< 1.2x");
 
     unmount();
   });
@@ -220,6 +222,7 @@ describe("ProviderGroupTab", () => {
           id: 11,
           name: "premium",
           costMultiplier: 1.5,
+          maxUpstreamMultiplier: null,
           description: JSON.stringify({
             note: "Priority group",
             publicStatus: {
@@ -259,6 +262,7 @@ describe("ProviderGroupTab", () => {
           id: 7,
           name: "default",
           costMultiplier: 1,
+          maxUpstreamMultiplier: null,
           description: null,
           providerCount: 2,
         },

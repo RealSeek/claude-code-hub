@@ -1235,6 +1235,29 @@ export async function updateProviderUpstreamBillingSnapshot(
   return updated.length > 0;
 }
 
+/** 当数据库中的最新倍率达到分组上限时，原子关闭仍处于启用状态的供应商。 */
+export async function disableProviderAtUpstreamMultiplierLimit(
+  providerId: number,
+  maxUpstreamMultiplier: number
+): Promise<boolean> {
+  const updated = await db
+    .update(providers)
+    .set({
+      isEnabled: false,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(providers.id, providerId),
+        eq(providers.isEnabled, true),
+        gte(providers.costMultiplier, maxUpstreamMultiplier.toString()),
+        isNull(providers.deletedAt)
+      )
+    )
+    .returning({ id: providers.id });
+  return updated.length > 0;
+}
+
 /** 保存 sub2api 刷新后的账户令牌。令牌不会进入计费快照或日志。 */
 export async function updateProviderUpstreamBillingTokens(
   providerId: number,

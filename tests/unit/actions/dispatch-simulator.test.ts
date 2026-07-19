@@ -46,6 +46,14 @@ const repositoryMocks = vi.hoisted(() => ({
   findAllProvidersFresh: vi.fn(async () => []),
 }));
 
+const providerGroupMocks = vi.hoisted(() => ({
+  getGroupBillingPolicy: vi.fn(async () => ({
+    groupName: "alpha",
+    costMultiplier: 1.5,
+    maxUpstreamMultiplier: null,
+  })),
+}));
+
 vi.mock("@/lib/auth", () => authMocks);
 vi.mock("@/lib/circuit-breaker", () => circuitBreakerMocks);
 vi.mock("@/lib/vendor-type-circuit-breaker", () => vendorCircuitMocks);
@@ -58,6 +66,7 @@ vi.mock("@/lib/rate-limit", () => ({
 }));
 vi.mock("@/lib/utils/timezone", () => timezoneMocks);
 vi.mock("@/repository/provider", () => repositoryMocks);
+vi.mock("@/repository/provider-groups", () => providerGroupMocks);
 
 function createProvider(id: number, overrides: Partial<Provider> = {}): Provider {
   return {
@@ -137,6 +146,11 @@ describe("dispatch simulator", () => {
       enabled: 2,
       circuitOpen: 0,
       available: 2,
+    });
+    providerGroupMocks.getGroupBillingPolicy.mockResolvedValue({
+      groupName: "alpha",
+      costMultiplier: 1.5,
+      maxUpstreamMultiplier: null,
     });
   });
 
@@ -409,6 +423,36 @@ describe("dispatch simulator", () => {
     expect(result.steps[1].stepName).toBe("formatCompatibility");
     expect(result.steps[1].outputCount).toBe(1);
     expect(result.finalCandidateCount).toBe(1);
+  });
+
+  test("filters providers that reach the configured group upstream limit", async () => {
+    providerGroupMocks.getGroupBillingPolicy.mockResolvedValueOnce({
+      groupName: "alpha",
+      costMultiplier: 1.5,
+      maxUpstreamMultiplier: 1.2,
+    });
+
+    const { simulateDispatchDecisionTree } = await import("@/actions/dispatch-simulator");
+    const result = await simulateDispatchDecisionTree(
+      [createProvider(30, { costMultiplier: 1.2 }), createProvider(31, { costMultiplier: 1.19 })],
+      {
+        clientFormat: "claude",
+        modelName: "",
+        groupTags: ["alpha"],
+      },
+      { systemTimezone: "UTC" }
+    );
+
+    expect(result.steps[2].stepName).toBe("enabledCheck");
+    expect(result.steps[2].outputCount).toBe(1);
+    expect(result.steps[2].filteredOut).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 30,
+          details: "group_cost_multiplier_exceeded",
+        }),
+      ])
+    );
   });
 
   test("server action rejects non-admin callers", async () => {

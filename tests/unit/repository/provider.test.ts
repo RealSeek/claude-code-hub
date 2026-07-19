@@ -147,3 +147,45 @@ describe("provider repository - updateProviderPrioritiesBatch", () => {
     );
   });
 });
+
+describe("provider repository - disableProviderAtUpstreamMultiplierLimit", () => {
+  test("条件命中时关闭供应商并返回 true", async () => {
+    vi.resetModules();
+
+    const returningMock = vi.fn(async () => [{ id: 7 }]);
+    const whereMock = vi.fn(() => ({ returning: returningMock }));
+    const setMock = vi.fn(() => ({ where: whereMock }));
+    const updateMock = vi.fn(() => ({ set: setMock }));
+    vi.doMock("@/drizzle/db", () => ({ db: { update: updateMock } }));
+
+    const { disableProviderAtUpstreamMultiplierLimit } = await import("@/repository/provider");
+    const result = await disableProviderAtUpstreamMultiplierLimit(7, 1.5);
+
+    expect(result).toBe(true);
+    expect(updateMock).toHaveBeenCalledOnce();
+    expect(setMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        isEnabled: false,
+        updatedAt: expect.any(Date),
+      })
+    );
+    expect(whereMock).toHaveBeenCalledOnce();
+    expect(returningMock).toHaveBeenCalledWith({ id: expect.anything() });
+  });
+
+  test("条件未命中时返回 false", async () => {
+    vi.resetModules();
+
+    const returningMock = vi.fn(async () => []);
+    const whereMock = vi.fn(() => ({ returning: returningMock }));
+    const setMock = vi.fn(() => ({ where: whereMock }));
+    const updateMock = vi.fn(() => ({ set: setMock }));
+    vi.doMock("@/drizzle/db", () => ({ db: { update: updateMock } }));
+
+    const { disableProviderAtUpstreamMultiplierLimit } = await import("@/repository/provider");
+    const result = await disableProviderAtUpstreamMultiplierLimit(7, 1.5);
+
+    expect(result).toBe(false);
+    expect(returningMock).toHaveBeenCalledOnce();
+  });
+});

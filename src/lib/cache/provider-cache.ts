@@ -14,6 +14,7 @@ import "server-only";
 import { getEnvConfig } from "@/lib/config";
 import { logger } from "@/lib/logger";
 import { publishCacheInvalidation, subscribeCacheInvalidation } from "@/lib/redis/pubsub";
+import { invalidateGroupMultiplierCache } from "@/repository/provider-groups";
 import type { Provider } from "@/types/provider";
 
 // 模块级别读取配置，避免热路径函数中频繁调用
@@ -85,6 +86,7 @@ export function invalidateCache(): void {
   cache.expiresAt = 0;
   cache.version++;
   cache.refreshPromise = null;
+  invalidateGroupMultiplierCache();
 }
 
 /**

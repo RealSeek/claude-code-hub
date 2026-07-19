@@ -26,7 +26,7 @@ import { isProviderActiveNow } from "@/lib/utils/provider-schedule";
 import { resolveSystemTimezone } from "@/lib/utils/timezone";
 import { isVendorTypeCircuitOpen } from "@/lib/vendor-type-circuit-breaker";
 import { findAllProviders, findProviderById } from "@/repository/provider";
-import { getGroupCostMultiplier } from "@/repository/provider-groups";
+import { type GroupBillingPolicy, getGroupBillingPolicy } from "@/repository/provider-groups";
 import type { ProviderChainItem } from "@/types/message";
 import type { Provider } from "@/types/provider";
 import { type AffinityLookupResult, getAffinityStore } from "./affinity/affinity-store";
@@ -41,6 +41,35 @@ import type { ClientFormat } from "./format-mapper";
 import { getVerboseProviderErrorCached } from "./provider-selector-settings-cache";
 import { ProxyResponses } from "./responses";
 import type { ProxySession } from "./session";
+
+export function isProviderWithinGroupBillingPolicy(
+  provider: Provider,
+  policy: GroupBillingPolicy | null
+): boolean {
+  if (!policy || policy.maxUpstreamMultiplier === null) {
+    return true;
+  }
+
+  const upstreamMultiplier = Number(provider.costMultiplier);
+  return Number.isFinite(upstreamMultiplier) && upstreamMultiplier < policy.maxUpstreamMultiplier;
+}
+
+async function resolveGroupBillingPolicy(
+  session?: ProxySession
+): Promise<GroupBillingPolicy | null> {
+  const effectiveGroup = getEffectiveProviderGroup(session);
+  if (!effectiveGroup) return null;
+
+  try {
+    return await getGroupBillingPolicy(effectiveGroup);
+  } catch (error) {
+    logger.warn("[ProviderSelector] 分组计费策略解析失败，回退到无阈值策略", {
+      effectiveGroup,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return { groupName: null, costMultiplier: 1.0, maxUpstreamMultiplier: null };
+  }
+}
 
 async function resolveReadyKeyCounts(
   providers: Provider[],
@@ -325,7 +354,8 @@ export class ProxyProviderResolver {
     if (!session.provider) {
       const { provider, context } = await ProxyProviderResolver.pickRandomProvider(
         session,
-        excludedProviders
+        excludedProviders,
+        groupBillingPolicy
       );
       session.setProvider(provider);
       session.setLastSelectionContext(context); // 保存用于后续记录
@@ -430,7 +460,11 @@ export class ProxyProviderResolver {
 
           // === 重试选择 ===
           const { provider: fallbackProvider, context: retryContext } =
-            await ProxyProviderResolver.pickRandomProvider(session, excludedProviders);
+            await ProxyProviderResolver.pickRandomProvider(
+              session,
+              excludedProviders,
+              groupBillingPolicy
+            );
 
           if (!fallbackProvider) {
             // 无其他可用供应商，退出循环
@@ -616,7 +650,12 @@ export class ProxyProviderResolver {
     session: ProxySession,
     excludeIds: number[]
   ): Promise<Provider | null> {
-    const { provider } = await ProxyProviderResolver.pickRandomProvider(session, excludeIds);
+    const groupBillingPolicy = await resolveGroupBillingPolicy(session);
+    const { provider } = await ProxyProviderResolver.pickRandomProvider(
+      session,
+      excludeIds,
+      groupBillingPolicy
+    );
     // pickRandomProvider 已经完成 Provider + Key 选择；不要二次推进 Key 轮询计数。
     return provider;
   }
@@ -882,7 +921,10 @@ export class ProxyProviderResolver {
   /**
    * 查找可复用的供应商（基于 session）
    */
-  private static async findReusable(session: ProxySession): Promise<Provider | null> {
+  private static async findReusable(
+    session: ProxySession,
+    groupBillingPolicy: GroupBillingPolicy | null
+  ): Promise<Provider | null> {
     if (!session.shouldReuseProvider() || !session.sessionId) {
       return null;
     }
@@ -1127,6 +1169,18 @@ export class ProxyProviderResolver {
         return null; // Reject reuse, re-select
       }
     }
+
+    if (!isProviderWithinGroupBillingPolicy(provider, groupBillingPolicy)) {
+      logger.warn("ProviderSelector: Session provider exceeds group upstream multiplier limit", {
+        sessionId: session.sessionId,
+        providerId: provider.id,
+        providerMultiplier: provider.costMultiplier,
+        groupName: groupBillingPolicy?.groupName,
+        maxUpstreamMultiplier: groupBillingPolicy?.maxUpstreamMultiplier,
+      });
+      await SessionManager.clearSessionProvider(session.sessionId);
+      return null;
+    }
     // No auth group info (effectiveGroup is null) can reuse any provider
 
     // 会话复用也必须遵守限额（否则会绕过"达到限额即禁用"的语义）
@@ -1176,7 +1230,8 @@ export class ProxyProviderResolver {
 
   private static async pickRandomProvider(
     session?: ProxySession,
-    excludeIds: number[] = [] // 排除已失败的供应商
+    excludeIds: number[] = [], // 排除已失败的供应商
+    groupBillingPolicy: GroupBillingPolicy | null = null
   ): Promise<{
     provider: Provider | null;
     context: NonNullable<ProviderChainItem["decisionContext"]>;
@@ -1309,6 +1364,10 @@ export class ProxyProviderResolver {
         return false;
       }
 
+      if (!isProviderWithinGroupBillingPolicy(provider, groupBillingPolicy)) {
+        return false;
+      }
+
       if (!hasUsableProviderApiKey(provider)) {
         return false;
       }
@@ -1353,6 +1412,7 @@ export class ProxyProviderResolver {
           | "type_mismatch"
           | "model_not_allowed"
           | "schedule_inactive"
+          | "group_cost_multiplier_exceeded"
           | "disabled" = "disabled";
         let details = "";
 
@@ -1362,6 +1422,9 @@ export class ProxyProviderResolver {
         } else if (excludeIds.includes(p.id)) {
           reason = "excluded";
           details = "已在前序尝试中失败";
+        } else if (!isProviderWithinGroupBillingPolicy(p, groupBillingPolicy)) {
+          reason = "group_cost_multiplier_exceeded";
+          details = `上游倍率 ${p.costMultiplier} 已达到分组上限 ${groupBillingPolicy?.maxUpstreamMultiplier}`;
         } else if (!isProviderActiveNow(p.activeTimeStart, p.activeTimeEnd, systemTimezone)) {
           reason = "schedule_inactive";
           details = `outside active window ${p.activeTimeStart}-${p.activeTimeEnd}`;

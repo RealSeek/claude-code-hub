@@ -43,6 +43,9 @@
     "modelRedirect": "模型重定向預覽",
     "endpointSummary": "端點狀態彙總"
   },
+  "details": {
+    "groupCostMultiplierExceeded": "供應商上游倍率已達到目前分組的盈利保護上限。"
+  },
   "notes": {
     "no_group_filter": "目前沒有勾選供應商分組，因此跳過分組過濾。",
     "model_filter_skipped_for_resource_request": "目前請求沒有模型名，依資源型請求邏輯跳過白名單過濾。",

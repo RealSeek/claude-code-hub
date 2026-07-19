@@ -34,6 +34,7 @@ vi.mock("@/lib/audit/emit", () => ({
 vi.mock("@/lib/logger", () => ({
   logger: {
     error: vi.fn(),
+    warn: vi.fn(),
   },
 }));
 
@@ -50,6 +51,7 @@ describe("provider-groups action description merge", () => {
       id: 11,
       name: "premium",
       costMultiplier: 1.5,
+      maxUpstreamMultiplier: null,
       description: JSON.stringify({
         version: 2,
         note: "Old note",
@@ -65,12 +67,14 @@ describe("provider-groups action description merge", () => {
       id: 12,
       name: "new-group",
       costMultiplier: "1.0",
+      maxUpstreamMultiplier: null,
       description: null,
     });
     mockRepoUpdateProviderGroup.mockResolvedValue({
       id: 11,
       name: "premium",
       costMultiplier: 1.5,
+      maxUpstreamMultiplier: null,
       description: JSON.stringify({
         version: 2,
         note: "New note",
@@ -93,6 +97,7 @@ describe("provider-groups action description merge", () => {
     expect(result.ok).toBe(true);
     expect(mockRepoUpdateProviderGroup).toHaveBeenCalledWith(11, {
       costMultiplier: undefined,
+      maxUpstreamMultiplier: undefined,
       description: JSON.stringify({
         version: 2,
         note: "New note",

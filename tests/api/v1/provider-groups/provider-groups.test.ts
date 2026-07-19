@@ -32,6 +32,7 @@ function group(overrides: Partial<ProviderGroup & { providerCount: number }> = {
     id: 1,
     name: "default",
     costMultiplier: 1,
+    maxUpstreamMultiplier: null,
     description: null,
     providerCount: 2,
     createdAt: new Date("2026-04-28T00:00:00.000Z"),
@@ -71,7 +72,12 @@ describe("v1 provider groups endpoints", () => {
       method: "POST",
       pathname: "/api/v1/provider-groups",
       headers: { Authorization: "Bearer admin-token" },
-      body: { name: "vip", costMultiplier: 1.5, description: "VIP group" },
+      body: {
+        name: "vip",
+        costMultiplier: 1.5,
+        maxUpstreamMultiplier: 1.2,
+        description: "VIP group",
+      },
     });
     expect(created.response.status).toBe(201);
     expect(created.response.headers.get("Location")).toBe("/api/v1/provider-groups/2");
@@ -80,10 +86,13 @@ describe("v1 provider groups endpoints", () => {
       method: "PATCH",
       pathname: "/api/v1/provider-groups/2",
       headers: { Authorization: "Bearer admin-token" },
-      body: { costMultiplier: 1.5 },
+      body: { costMultiplier: 1.5, maxUpstreamMultiplier: null },
     });
     expect(updated.response.status).toBe(200);
-    expect(updateProviderGroupMock).toHaveBeenCalledWith(2, { costMultiplier: 1.5 });
+    expect(updateProviderGroupMock).toHaveBeenCalledWith(2, {
+      costMultiplier: 1.5,
+      maxUpstreamMultiplier: null,
+    });
 
     const deleted = await callV1Route({
       method: "DELETE",

@@ -43,6 +43,9 @@
     "modelRedirect": "モデルリダイレクト確認",
     "endpointSummary": "エンドポイント概要"
   },
+  "details": {
+    "groupCostMultiplierExceeded": "プロバイダーの上流倍率がこのグループの利益保護上限に達しました。"
+  },
   "notes": {
     "no_group_filter": "プロバイダーグループが未選択のため、グループフィルターはスキップされました。",
     "model_filter_skipped_for_resource_request": "モデル名がないため、リソース系リクエストとして許可リスト判定をスキップします。",
