@@ -9,6 +9,9 @@ const {
   mockProbe,
   mockPublishInvalidation,
   mockClearConfigCache,
+  mockDisableAtLimit,
+  mockGetGroupBillingPolicy,
+  mockEmitActionAudit,
 } = vi.hoisted(() => ({
   mockGetSession: vi.fn(),
   mockFindProviderById: vi.fn(),
@@ -18,6 +21,9 @@ const {
   mockProbe: vi.fn(),
   mockPublishInvalidation: vi.fn(),
   mockClearConfigCache: vi.fn(),
+  mockDisableAtLimit: vi.fn(),
+  mockGetGroupBillingPolicy: vi.fn(),
+  mockEmitActionAudit: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({ getSession: mockGetSession }));
@@ -26,6 +32,10 @@ vi.mock("@/repository/provider", () => ({
   findProviderById: mockFindProviderById,
   updateProviderUpstreamBillingSnapshot: mockUpdateSnapshot,
   updateProviderUpstreamBillingTokens: mockUpdateTokens,
+  disableProviderAtUpstreamMultiplierLimit: mockDisableAtLimit,
+}));
+vi.mock("@/repository/provider-groups", () => ({
+  getGroupBillingPolicy: mockGetGroupBillingPolicy,
 }));
 vi.mock("@/lib/provider-upstream-billing", () => ({
   probeProviderUpstreamBilling: mockProbe,
@@ -34,6 +44,7 @@ vi.mock("@/lib/cache/provider-cache", () => ({
   publishProviderCacheInvalidation: mockPublishInvalidation,
 }));
 vi.mock("@/lib/circuit-breaker", () => ({ clearConfigCache: mockClearConfigCache }));
+vi.mock("@/lib/audit/emit", () => ({ emitActionAudit: mockEmitActionAudit }));
 vi.mock("@/lib/logger", () => ({ logger: { info: vi.fn(), warn: vi.fn() } }));
 
 import {
@@ -84,6 +95,12 @@ describe("provider upstream billing actions", () => {
     mockUpdateTokens.mockResolvedValue(true);
     mockProbe.mockResolvedValue(billing);
     mockPublishInvalidation.mockResolvedValue(undefined);
+    mockDisableAtLimit.mockResolvedValue(false);
+    mockGetGroupBillingPolicy.mockResolvedValue({
+      groupName: "default",
+      costMultiplier: 1,
+      maxUpstreamMultiplier: null,
+    });
   });
 
   it("批量查询会去重渠道编号", async () => {

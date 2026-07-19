@@ -46,7 +46,13 @@
       "create": "创建供应商",
       "update": "更新供应商",
       "delete": "删除供应商",
-      "key_reveal": "查看供应商密钥"
+      "key_reveal": "查看供应商密钥",
+      "cost_multiplier": {
+        "sync": "同步供应商成本倍率"
+      },
+      "upstream_multiplier": {
+        "auto_disable": "达到上游倍率上限时自动关闭供应商"
+      }
     },
     "provider_group": {
       "create": "创建供应商分组",

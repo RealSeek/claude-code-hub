@@ -5,6 +5,11 @@ export const ProviderGroupSchema = z.object({
   id: z.number().int().positive().describe("Provider group id."),
   name: z.string().describe("Provider group name."),
   costMultiplier: z.number().min(0).describe("Group cost multiplier."),
+  maxUpstreamMultiplier: z
+    .number()
+    .min(0)
+    .nullable()
+    .describe("Optional maximum upstream multiplier before provider exclusion."),
   description: z.string().nullable().describe("Optional group description."),
   providerCount: z
     .number()
@@ -24,6 +29,12 @@ export const ProviderGroupCreateSchema = z
   .object({
     name: z.string().trim().min(1).max(100).describe("Provider group name."),
     costMultiplier: z.number().min(0).optional().describe("Group cost multiplier."),
+    maxUpstreamMultiplier: z
+      .number()
+      .min(0)
+      .nullable()
+      .optional()
+      .describe("Optional maximum upstream multiplier."),
     description: z.string().max(5000).optional().describe("Optional group description."),
   })
   .strict();
@@ -31,6 +42,12 @@ export const ProviderGroupCreateSchema = z
 export const ProviderGroupUpdateSchema = z
   .object({
     costMultiplier: z.number().min(0).optional().describe("Group cost multiplier."),
+    maxUpstreamMultiplier: z
+      .number()
+      .min(0)
+      .nullable()
+      .optional()
+      .describe("Optional maximum upstream multiplier."),
     description: z.string().max(5000).nullable().optional().describe("Optional group description."),
     descriptionNote: z
       .string()

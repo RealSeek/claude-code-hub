@@ -46,7 +46,13 @@
       "create": "プロバイダー作成",
       "update": "プロバイダー更新",
       "delete": "プロバイダー削除",
-      "key_reveal": "プロバイダーキー表示"
+      "key_reveal": "プロバイダーキー表示",
+      "cost_multiplier": {
+        "sync": "プロバイダーのコスト倍率を同期"
+      },
+      "upstream_multiplier": {
+        "auto_disable": "上流倍率の上限によりプロバイダーを自動無効化"
+      }
     },
     "provider_group": {
       "create": "プロバイダーグループ作成",

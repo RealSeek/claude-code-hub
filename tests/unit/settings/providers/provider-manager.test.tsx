@@ -7,6 +7,7 @@ import { type ReactNode, act } from "react";
 import { createRoot } from "react-dom/client";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { ProviderDisplay } from "@/types/provider";
+import type { User } from "@/types/user";
 import enMessages from "../../../../messages/en";
 
 // ---------------------------------------------------------------------------
@@ -54,6 +55,20 @@ vi.mock("@/app/[locale]/settings/providers/_components/provider-group-tab", () =
   ),
 }));
 
+const mockGetProviderGroups = vi.fn();
+const mockUpdateProviderGroup = vi.fn();
+vi.mock("@/lib/api-client/v1/actions/provider-groups", () => ({
+  getProviderGroups: (...args: unknown[]) => mockGetProviderGroups(...args),
+  updateProviderGroup: (...args: unknown[]) => mockUpdateProviderGroup(...args),
+}));
+
+vi.mock("sonner", () => ({
+  toast: {
+    error: vi.fn(),
+    success: vi.fn(),
+  },
+}));
+
 // ProviderVendorView -- not under test
 vi.mock("@/app/[locale]/settings/providers/_components/provider-vendor-view", () => ({
   ProviderVendorView: () => null,
@@ -73,6 +88,9 @@ vi.mock("@/components/ui/dialog", () => ({
   Dialog: ({ open, children }: { open: boolean; children: ReactNode }) =>
     open ? <div data-testid="dialog-root">{children}</div> : null,
   DialogContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  DialogDescription: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  DialogFooter: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  DialogHeader: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   DialogTitle: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
 
@@ -179,6 +197,8 @@ let ProviderManager: typeof import("@/app/[locale]/settings/providers/_component
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  mockGetProviderGroups.mockResolvedValue({ ok: true, data: [] });
+  mockUpdateProviderGroup.mockResolvedValue({ ok: true, data: {} });
   while (document.body.firstChild) {
     document.body.removeChild(document.body.firstChild);
   }
@@ -301,6 +321,65 @@ describe("ProviderManager circuitBrokenCount with endpoint circuits", () => {
       "Provider A"
     );
 
+    unmount();
+  });
+
+  test("管理员右键分组标签可设置上游倍率上限", async () => {
+    const adminUser = { role: "admin" } as User;
+    const premiumProvider = makeProvider({ groupTag: "premium" });
+    mockGetProviderGroups.mockResolvedValue({
+      ok: true,
+      data: [
+        {
+          id: 9,
+          name: "premium",
+          description: null,
+          costMultiplier: 1,
+          maxUpstreamMultiplier: 1.25,
+          providerCount: 1,
+        },
+      ],
+    });
+
+    const { unmount, container } = renderWithProviders(
+      <ProviderManager
+        providers={[premiumProvider]}
+        currentUser={adminUser}
+        healthStatus={{}}
+        enableMultiProviderTypes={true}
+      />
+    );
+
+    const groupButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "premium"
+    );
+    expect(groupButton).toBeTruthy();
+
+    await act(async () => {
+      groupButton!.dispatchEvent(
+        new MouseEvent("contextmenu", { bubbles: true, cancelable: true })
+      );
+    });
+
+    expect(mockGetProviderGroups).toHaveBeenCalledOnce();
+    const input = container.querySelector('input[type="number"]') as HTMLInputElement;
+    expect(input.value).toBe("1.25");
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      setter?.call(input, "1.5");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    const saveButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "Save"
+    );
+    expect(saveButton).toBeTruthy();
+    await act(async () => {
+      saveButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(mockUpdateProviderGroup).toHaveBeenCalledWith(9, { maxUpstreamMultiplier: 1.5 });
     unmount();
   });
 

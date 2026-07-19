@@ -3,6 +3,7 @@
 import { getTranslations } from "next-intl/server";
 import { emitActionAudit } from "@/lib/audit/emit";
 import { getSession } from "@/lib/auth";
+import { publishProviderCacheInvalidation } from "@/lib/cache/provider-cache";
 import { PROVIDER_GROUP } from "@/lib/constants/provider.constants";
 import { logger } from "@/lib/logger";
 import { bootstrapProviderGroupsFromProviders } from "@/lib/provider-groups/bootstrap";
@@ -22,6 +23,16 @@ import {
 } from "@/repository/provider-groups";
 import type { ProviderGroup } from "@/types/provider-group";
 import type { ActionResult } from "./types";
+
+async function publishGroupPolicyInvalidation(): Promise<void> {
+  try {
+    await publishProviderCacheInvalidation();
+  } catch (error) {
+    logger.warn("provider_group:policy_cache_invalidation_failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -43,7 +54,7 @@ export async function getProviderGroups(): Promise<ActionResult<ProviderGroupWit
   const tError = await getTranslations("errors");
   try {
     const session = await getSession();
-    if (!session || session.user.role !== "admin") {
+    if (session?.user.role !== "admin") {
       return { ok: false, error: tError("UNAUTHORIZED"), errorCode: ERROR_CODES.UNAUTHORIZED };
     }
 
@@ -74,18 +85,19 @@ export async function getProviderGroups(): Promise<ActionResult<ProviderGroupWit
 
 /**
  * Create a new provider group.
- * Admin-only. Validates name is non-empty and not duplicate, costMultiplier >= 0.
+ * 仅管理员可用，校验分组名称、重复名称以及所有倍率均为非负数。
  */
 export async function createProviderGroup(input: {
   name: string;
   costMultiplier?: number;
+  maxUpstreamMultiplier?: number | null;
   description?: string;
 }): Promise<ActionResult<ProviderGroup>> {
   const t = await getTranslations("settings.providers.providerGroups");
   const tError = await getTranslations("errors");
   try {
     const session = await getSession();
-    if (!session || session.user.role !== "admin") {
+    if (session?.user.role !== "admin") {
       return { ok: false, error: tError("UNAUTHORIZED"), errorCode: ERROR_CODES.UNAUTHORIZED };
     }
 
@@ -102,6 +114,18 @@ export async function createProviderGroup(input: {
         ok: false,
         error: t("invalidMultiplier"),
         errorCode: "INVALID_MULTIPLIER",
+      };
+    }
+
+    if (
+      input.maxUpstreamMultiplier !== undefined &&
+      input.maxUpstreamMultiplier !== null &&
+      (!Number.isFinite(input.maxUpstreamMultiplier) || input.maxUpstreamMultiplier < 0)
+    ) {
+      return {
+        ok: false,
+        error: t("invalidMaxUpstreamMultiplier"),
+        errorCode: "INVALID_MAX_UPSTREAM_MULTIPLIER",
       };
     }
 
@@ -126,8 +150,10 @@ export async function createProviderGroup(input: {
     const group = await repoCreateProviderGroup({
       name,
       costMultiplier: input.costMultiplier,
+      maxUpstreamMultiplier: input.maxUpstreamMultiplier ?? null,
       description: input.description ?? null,
     });
+    await publishGroupPolicyInvalidation();
 
     emitActionAudit({
       category: "provider_group",
@@ -139,6 +165,7 @@ export async function createProviderGroup(input: {
         id: group.id,
         name: group.name,
         costMultiplier: group.costMultiplier,
+        maxUpstreamMultiplier: group.maxUpstreamMultiplier,
         description: group.description,
       },
       success: true,
@@ -164,13 +191,18 @@ export async function createProviderGroup(input: {
  */
 export async function updateProviderGroup(
   id: number,
-  input: { costMultiplier?: number; description?: string | null; descriptionNote?: string | null }
+  input: {
+    costMultiplier?: number;
+    maxUpstreamMultiplier?: number | null;
+    description?: string | null;
+    descriptionNote?: string | null;
+  }
 ): Promise<ActionResult<ProviderGroup>> {
   const t = await getTranslations("settings.providers.providerGroups");
   const tError = await getTranslations("errors");
   try {
     const session = await getSession();
-    if (!session || session.user.role !== "admin") {
+    if (session?.user.role !== "admin") {
       return { ok: false, error: tError("UNAUTHORIZED"), errorCode: ERROR_CODES.UNAUTHORIZED };
     }
 
@@ -182,6 +214,18 @@ export async function updateProviderGroup(
         ok: false,
         error: t("invalidMultiplier"),
         errorCode: "INVALID_MULTIPLIER",
+      };
+    }
+
+    if (
+      input.maxUpstreamMultiplier !== undefined &&
+      input.maxUpstreamMultiplier !== null &&
+      (!Number.isFinite(input.maxUpstreamMultiplier) || input.maxUpstreamMultiplier < 0)
+    ) {
+      return {
+        ok: false,
+        error: t("invalidMaxUpstreamMultiplier"),
+        errorCode: "INVALID_MAX_UPSTREAM_MULTIPLIER",
       };
     }
 
@@ -203,12 +247,14 @@ export async function updateProviderGroup(
 
     const updated = await repoUpdateProviderGroup(id, {
       costMultiplier: input.costMultiplier,
+      maxUpstreamMultiplier: input.maxUpstreamMultiplier,
       description: nextDescription,
     });
 
     if (!updated) {
       return { ok: false, error: tError("NOT_FOUND"), errorCode: ERROR_CODES.NOT_FOUND };
     }
+    await publishGroupPolicyInvalidation();
 
     emitActionAudit({
       category: "provider_group",
@@ -221,6 +267,7 @@ export async function updateProviderGroup(
         id: updated.id,
         name: updated.name,
         costMultiplier: updated.costMultiplier,
+        maxUpstreamMultiplier: updated.maxUpstreamMultiplier,
         description: updated.description,
       },
       success: true,
@@ -249,7 +296,7 @@ export async function deleteProviderGroup(id: number): Promise<ActionResult<void
   const tError = await getTranslations("errors");
   try {
     const session = await getSession();
-    if (!session || session.user.role !== "admin") {
+    if (session?.user.role !== "admin") {
       return { ok: false, error: tError("UNAUTHORIZED"), errorCode: ERROR_CODES.UNAUTHORIZED };
     }
 
@@ -277,6 +324,7 @@ export async function deleteProviderGroup(id: number): Promise<ActionResult<void
     }
 
     await repoDeleteProviderGroup(id);
+    await publishGroupPolicyInvalidation();
     emitActionAudit({
       category: "provider_group",
       action: "provider_group.delete",

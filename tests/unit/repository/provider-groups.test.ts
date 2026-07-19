@@ -90,6 +90,7 @@ vi.mock("@/drizzle/schema", () => ({
     id: "id",
     name: "name",
     costMultiplier: "cost_multiplier",
+    maxUpstreamMultiplier: "max_upstream_multiplier",
     description: "description",
     createdAt: "created_at",
     updatedAt: "updated_at",
@@ -105,6 +106,7 @@ function fakeRow(
     id: number;
     name: string;
     costMultiplier: string;
+    maxUpstreamMultiplier: string | null;
     description: string | null;
     createdAt: Date;
     updatedAt: Date;
@@ -114,6 +116,7 @@ function fakeRow(
     id: overrides.id ?? 1,
     name: overrides.name ?? "default",
     costMultiplier: overrides.costMultiplier ?? "1.0000",
+    maxUpstreamMultiplier: overrides.maxUpstreamMultiplier ?? null,
     description: overrides.description ?? null,
     createdAt: overrides.createdAt ?? new Date("2026-01-01T00:00:00Z"),
     updatedAt: overrides.updatedAt ?? new Date("2026-01-01T00:00:00Z"),
@@ -263,6 +266,51 @@ describe("provider-groups repository", () => {
       const second = await getGroupCostMultiplier("new-group");
       expect(second).toBe(5.0);
       expect(selectMock.mock.calls.length).toBeGreaterThan(callsAfterFirst);
+    });
+  });
+
+  describe("getGroupBillingPolicy", () => {
+    it("返回首个已配置分组的收费倍率和上游倍率上限", async () => {
+      selectMock.mockImplementationOnce(() =>
+        createQuery([
+          fakeRow({
+            name: "enterprise",
+            costMultiplier: "1.8000",
+            maxUpstreamMultiplier: "1.5000",
+          }),
+          fakeRow({
+            name: "premium",
+            costMultiplier: "1.6000",
+            maxUpstreamMultiplier: "1.3000",
+          }),
+        ])
+      );
+
+      const { getGroupBillingPolicy, invalidateGroupMultiplierCache } = await import(
+        "@/repository/provider-groups"
+      );
+      invalidateGroupMultiplierCache();
+
+      await expect(getGroupBillingPolicy("premium,enterprise")).resolves.toEqual({
+        groupName: "premium",
+        costMultiplier: 1.6,
+        maxUpstreamMultiplier: 1.3,
+      });
+    });
+
+    it("未配置分组时回退为不限制策略", async () => {
+      selectMock.mockImplementationOnce(() => createQuery([]));
+
+      const { getGroupBillingPolicy, invalidateGroupMultiplierCache } = await import(
+        "@/repository/provider-groups"
+      );
+      invalidateGroupMultiplierCache();
+
+      await expect(getGroupBillingPolicy("missing")).resolves.toEqual({
+        groupName: null,
+        costMultiplier: 1,
+        maxUpstreamMultiplier: null,
+      });
     });
   });
 

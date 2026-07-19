@@ -37,6 +37,7 @@ function ProviderManagerLoaderContent({
     queryFn: getProviders,
     refetchOnWindowFocus: false,
     staleTime: 30_000,
+    refetchInterval: 60_000,
   });
 
   const providerIds = providers

@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
+import type { GroupBillingPolicy } from "@/repository/provider-groups";
 import type { Provider } from "@/types/provider";
-import { ProxyProviderResolver } from "@/app/v1/_lib/proxy/provider-selector";
+import {
+  isProviderWithinGroupBillingPolicy,
+  ProxyProviderResolver,
+} from "@/app/v1/_lib/proxy/provider-selector";
 
 function makeProvider(overrides: Partial<Provider>): Provider {
   return {
@@ -198,5 +202,40 @@ describe("selectTopPriority with group context", () => {
     const noGroupResult = selectTopPriority([providerA, providerB], null);
     expect(noGroupResult).toHaveLength(1);
     expect(noGroupResult[0].id).toBe(2);
+  });
+});
+
+describe("分组上游倍率保护", () => {
+  const policy = (maxUpstreamMultiplier: number | null): GroupBillingPolicy => ({
+    groupName: "premium",
+    costMultiplier: 1.5,
+    maxUpstreamMultiplier,
+  });
+
+  it("未配置上限时不影响供应商", () => {
+    expect(
+      isProviderWithinGroupBillingPolicy(makeProvider({ costMultiplier: 9 }), policy(null))
+    ).toBe(true);
+  });
+
+  it("上游倍率低于上限时允许调度", () => {
+    expect(
+      isProviderWithinGroupBillingPolicy(makeProvider({ costMultiplier: 1.19 }), policy(1.2))
+    ).toBe(true);
+  });
+
+  it("上游倍率达到或超过上限时阻止调度", () => {
+    expect(
+      isProviderWithinGroupBillingPolicy(makeProvider({ costMultiplier: 1.2 }), policy(1.2))
+    ).toBe(false);
+    expect(
+      isProviderWithinGroupBillingPolicy(makeProvider({ costMultiplier: 1.3 }), policy(1.2))
+    ).toBe(false);
+  });
+
+  it("启用保护时拒绝无效倍率", () => {
+    expect(
+      isProviderWithinGroupBillingPolicy(makeProvider({ costMultiplier: Number.NaN }), policy(1.2))
+    ).toBe(false);
   });
 });

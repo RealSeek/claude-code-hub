@@ -61,6 +61,7 @@ import { invalidateProviderQueries } from "./invalidate-provider-queries";
 interface GroupFormState {
   name: string;
   costMultiplier: string;
+  maxUpstreamMultiplier: string;
   description: string;
 }
 
@@ -73,6 +74,7 @@ interface ProviderGroupTabProps {
 const INITIAL_FORM: GroupFormState = {
   name: "",
   costMultiplier: "1.0",
+  maxUpstreamMultiplier: "",
   description: "",
 };
 
@@ -134,6 +136,8 @@ export function ProviderGroupTab({
     setForm({
       name: group.name,
       costMultiplier: String(group.costMultiplier),
+      maxUpstreamMultiplier:
+        group.maxUpstreamMultiplier === null ? "" : String(group.maxUpstreamMultiplier),
       description: getProviderGroupDescriptionNote(group.description),
     });
     setDialogOpen(true);
@@ -154,6 +158,8 @@ export function ProviderGroupTab({
           return t("duplicateName");
         case "INVALID_MULTIPLIER":
           return t("invalidMultiplier");
+        case "INVALID_MAX_UPSTREAM_MULTIPLIER":
+          return t("invalidMaxUpstreamMultiplier");
         case "DESCRIPTION_TOO_LONG":
           return t("descriptionTooLong");
         default:
@@ -168,6 +174,7 @@ export function ProviderGroupTab({
       groupId: number,
       patch: {
         costMultiplier?: number;
+        maxUpstreamMultiplier?: number | null;
         description?: string | null;
         descriptionNote?: string | null;
       }
@@ -191,6 +198,17 @@ export function ProviderGroupTab({
       return;
     }
 
+    const maxUpstreamMultiplierRaw = form.maxUpstreamMultiplier.trim();
+    const maxUpstreamMultiplier =
+      maxUpstreamMultiplierRaw.length === 0 ? null : Number.parseFloat(maxUpstreamMultiplierRaw);
+    if (
+      maxUpstreamMultiplier !== null &&
+      (!Number.isFinite(maxUpstreamMultiplier) || maxUpstreamMultiplier < 0)
+    ) {
+      toast.error(t("invalidMaxUpstreamMultiplier"));
+      return;
+    }
+
     const trimmedName = form.name.trim();
     const trimmedDescription = form.description.trim();
     if (!editingGroup && !trimmedName) {
@@ -206,6 +224,7 @@ export function ProviderGroupTab({
       if (editingGroup) {
         const ok = await saveGroupPatch(editingGroup.id, {
           costMultiplier,
+          maxUpstreamMultiplier,
           descriptionNote: trimmedDescription || null,
         });
         if (ok) {
@@ -217,6 +236,7 @@ export function ProviderGroupTab({
       const result = await createProviderGroup({
         name: trimmedName,
         costMultiplier,
+        maxUpstreamMultiplier,
         description: trimmedDescription || undefined,
       });
       if (result.ok) {
@@ -305,13 +325,14 @@ export function ProviderGroupTab({
           <p className="mt-1 text-xs text-muted-foreground">{t("noGroupsDesc")}</p>
         </div>
       ) : (
-        <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
-          <Table>
+        <div className="overflow-x-auto rounded-xl border bg-card shadow-sm">
+          <Table className="min-w-[1100px]">
             <TableHeader>
               <TableRow>
                 <TableHead className="w-[44px]" />
                 <TableHead>{t("groupName")}</TableHead>
                 <TableHead className="w-[180px]">{t("costMultiplier")}</TableHead>
+                <TableHead className="w-[180px]">{t("maxUpstreamMultiplier")}</TableHead>
                 <TableHead>{t("descriptionLabel")}</TableHead>
                 <TableHead className="w-[120px] text-center">{t("providerCount")}</TableHead>
                 <TableHead className="w-[96px]" />
@@ -361,6 +382,13 @@ export function ProviderGroupTab({
                           />
                         ) : (
                           <span className="font-mono">{group.costMultiplier}x</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {group.maxUpstreamMultiplier === null ? (
+                          <span className="text-muted-foreground">{t("unlimited")}</span>
+                        ) : (
+                          <span className="font-mono">&lt; {group.maxUpstreamMultiplier}x</span>
                         )}
                       </TableCell>
                       <TableCell className="max-w-[360px]">
@@ -419,7 +447,7 @@ export function ProviderGroupTab({
 
                     {isExpanded ? (
                       <TableRow>
-                        <TableCell colSpan={6} className="bg-muted/20 p-0">
+                        <TableCell colSpan={7} className="bg-muted/20 p-0">
                           <GroupMembersPanel
                             groupName={group.name}
                             members={members}
@@ -483,6 +511,23 @@ export function ProviderGroupTab({
                 value={form.description}
                 onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))}
                 placeholder={t("descriptionPlaceholder")}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label htmlFor="group-max-upstream-multiplier" className="text-sm font-medium">
+                {t("maxUpstreamMultiplier")}
+              </label>
+              <Input
+                id="group-max-upstream-multiplier"
+                type="number"
+                min={0}
+                step={0.01}
+                value={form.maxUpstreamMultiplier}
+                onChange={(e) =>
+                  setForm((prev) => ({ ...prev, maxUpstreamMultiplier: e.target.value }))
+                }
+                placeholder={t("maxUpstreamMultiplierPlaceholder")}
               />
             </div>
           </div>

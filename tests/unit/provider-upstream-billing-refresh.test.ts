@@ -7,6 +7,9 @@ const {
   mockProbe,
   mockPublishInvalidation,
   mockClearConfigCache,
+  mockEmitActionAudit,
+  mockDisableAtLimit,
+  mockGetGroupBillingPolicy,
 } = vi.hoisted(() => ({
   mockFindProviderById: vi.fn(),
   mockClaimRefresh: vi.fn(),
@@ -14,12 +17,19 @@ const {
   mockProbe: vi.fn(),
   mockPublishInvalidation: vi.fn(),
   mockClearConfigCache: vi.fn(),
+  mockEmitActionAudit: vi.fn(),
+  mockDisableAtLimit: vi.fn(),
+  mockGetGroupBillingPolicy: vi.fn(),
 }));
 
 vi.mock("@/repository/provider", () => ({
   claimProviderUpstreamBillingRefresh: mockClaimRefresh,
   findProviderById: mockFindProviderById,
   updateProviderUpstreamBillingSnapshot: mockUpdateSnapshot,
+  disableProviderAtUpstreamMultiplierLimit: mockDisableAtLimit,
+}));
+vi.mock("@/repository/provider-groups", () => ({
+  getGroupBillingPolicy: mockGetGroupBillingPolicy,
 }));
 vi.mock("@/lib/provider-upstream-billing", () => ({
   probeProviderUpstreamBilling: mockProbe,
@@ -28,6 +38,7 @@ vi.mock("@/lib/cache/provider-cache", () => ({
   publishProviderCacheInvalidation: mockPublishInvalidation,
 }));
 vi.mock("@/lib/circuit-breaker", () => ({ clearConfigCache: mockClearConfigCache }));
+vi.mock("@/lib/audit/emit", () => ({ emitActionAudit: mockEmitActionAudit }));
 vi.mock("@/lib/logger", () => ({ logger: { info: vi.fn(), warn: vi.fn() } }));
 
 import {
@@ -42,6 +53,7 @@ const provider = {
   key: "sk-test",
   apiKeys: [],
   costMultiplier: 1,
+  groupTag: "premium",
   upstreamBillingType: "sub2api",
   upstreamBillingAccessToken: null,
   upstreamBillingRefreshToken: null,
@@ -76,6 +88,12 @@ describe("provider upstream billing refresh service", () => {
     mockUpdateSnapshot.mockResolvedValue(true);
     mockProbe.mockResolvedValue(billing);
     mockPublishInvalidation.mockResolvedValue(undefined);
+    mockDisableAtLimit.mockResolvedValue(false);
+    mockGetGroupBillingPolicy.mockResolvedValue({
+      groupName: "premium",
+      costMultiplier: 1,
+      maxUpstreamMultiplier: null,
+    });
   });
 
   it("请求触发使用固定十分钟门禁并在未抢到时直接复用快照", async () => {
@@ -101,6 +119,15 @@ describe("provider upstream billing refresh service", () => {
     );
     expect(mockClearConfigCache).toHaveBeenCalledWith(7);
     expect(mockPublishInvalidation).toHaveBeenCalledOnce();
+    expect(mockEmitActionAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        category: "provider",
+        action: "provider.cost_multiplier.sync",
+        targetId: "7",
+        before: { costMultiplier: 1 },
+        after: expect.objectContaining({ costMultiplier: 0.5, groupTag: "premium" }),
+      })
+    );
     expect(result).toMatchObject({ refreshed: true, multiplierSynced: true });
   });
 
@@ -176,5 +203,126 @@ describe("provider upstream billing refresh service", () => {
       undefined
     );
     expect(mockClearConfigCache).not.toHaveBeenCalled();
+  });
+
+  it("同步倍率等于分组上限时自动关闭供应商并记录审计", async () => {
+    mockProbe.mockResolvedValue({ ...billing, effectiveMultiplier: 1.5 });
+    mockGetGroupBillingPolicy.mockResolvedValue({
+      groupName: "premium",
+      costMultiplier: 1,
+      maxUpstreamMultiplier: 1.5,
+    });
+    mockDisableAtLimit.mockResolvedValue(true);
+
+    await refreshProviderUpstreamBilling(7, { source: "request" });
+
+    expect(mockGetGroupBillingPolicy).toHaveBeenCalledWith("premium");
+    expect(mockDisableAtLimit).toHaveBeenCalledWith(7, 1.5);
+    expect(mockClearConfigCache).toHaveBeenCalledTimes(1);
+    expect(mockPublishInvalidation).toHaveBeenCalledTimes(1);
+    expect(mockEmitActionAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        category: "provider",
+        action: "provider.upstream_multiplier.auto_disable",
+        targetId: "7",
+        before: { isEnabled: true, costMultiplier: 1 },
+        after: expect.objectContaining({
+          isEnabled: false,
+          costMultiplier: 1.5,
+          groupName: "premium",
+          maxUpstreamMultiplier: 1.5,
+          source: "request",
+          billingSource: "sub2api",
+        }),
+      })
+    );
+  });
+
+  it("倍率未变化但达到分组上限时仍自动关闭供应商", async () => {
+    mockProbe.mockResolvedValue({ ...billing, effectiveMultiplier: 1 });
+    mockGetGroupBillingPolicy.mockResolvedValue({
+      groupName: "premium",
+      costMultiplier: 1,
+      maxUpstreamMultiplier: 1,
+    });
+    mockDisableAtLimit.mockResolvedValue(true);
+
+    const result = await refreshProviderUpstreamBilling(7, { source: "scheduled" });
+
+    expect(mockUpdateSnapshot).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({ effectiveMultiplier: 1 }),
+      undefined
+    );
+    expect(mockDisableAtLimit).toHaveBeenCalledWith(7, 1);
+    expect(mockPublishInvalidation).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ multiplierSynced: false, previousMultiplier: 1 });
+  });
+
+  it("同步倍率高于分组上限时自动关闭供应商", async () => {
+    mockProbe.mockResolvedValue({ ...billing, effectiveMultiplier: 2 });
+    mockGetGroupBillingPolicy.mockResolvedValue({
+      groupName: "premium",
+      costMultiplier: 1,
+      maxUpstreamMultiplier: 1,
+    });
+    mockDisableAtLimit.mockResolvedValue(true);
+
+    await refreshProviderUpstreamBilling(7, { source: "scheduled" });
+
+    expect(mockDisableAtLimit).toHaveBeenCalledWith(7, 1);
+  });
+
+  it("同步倍率低于分组上限时保持供应商启用", async () => {
+    mockGetGroupBillingPolicy.mockResolvedValue({
+      groupName: "premium",
+      costMultiplier: 1,
+      maxUpstreamMultiplier: 0.75,
+    });
+
+    await refreshProviderUpstreamBilling(7, { source: "request" });
+
+    expect(mockDisableAtLimit).not.toHaveBeenCalled();
+    expect(mockEmitActionAudit).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: "provider.upstream_multiplier.auto_disable" })
+    );
+  });
+
+  it("分组未设置上限时不自动关闭供应商", async () => {
+    await refreshProviderUpstreamBilling(7, { source: "request" });
+
+    expect(mockDisableAtLimit).not.toHaveBeenCalled();
+  });
+
+  it("自动关闭条件更新未命中时不重复记录审计", async () => {
+    mockProbe.mockResolvedValue({ ...billing, effectiveMultiplier: 1.5 });
+    mockGetGroupBillingPolicy.mockResolvedValue({
+      groupName: "premium",
+      costMultiplier: 1,
+      maxUpstreamMultiplier: 1,
+    });
+    mockDisableAtLimit.mockResolvedValue(false);
+
+    await refreshProviderUpstreamBilling(7, { source: "request" });
+
+    expect(mockDisableAtLimit).toHaveBeenCalledWith(7, 1);
+    expect(mockEmitActionAudit).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: "provider.upstream_multiplier.auto_disable" })
+    );
+  });
+
+  it("空分组值按 default 分组上限处理", async () => {
+    mockFindProviderById.mockResolvedValue({ ...provider, groupTag: "，, \n" });
+    mockProbe.mockResolvedValue({ ...billing, effectiveMultiplier: 1.5 });
+    mockGetGroupBillingPolicy.mockResolvedValue({
+      groupName: "default",
+      costMultiplier: 1,
+      maxUpstreamMultiplier: 1,
+    });
+
+    await refreshProviderUpstreamBilling(7, { source: "request" });
+
+    expect(mockGetGroupBillingPolicy).toHaveBeenCalledWith("default");
+    expect(mockDisableAtLimit).toHaveBeenCalledWith(7, 1);
   });
 });

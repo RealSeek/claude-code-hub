@@ -43,6 +43,9 @@
     "modelRedirect": "模型重定向预览",
     "endpointSummary": "端点状态汇总"
   },
+  "details": {
+    "groupCostMultiplierExceeded": "供应商上游倍率已达到当前分组的盈利保护上限。"
+  },
   "notes": {
     "no_group_filter": "当前没有勾选供应商分组，因此跳过分组过滤。",
     "model_filter_skipped_for_resource_request": "当前请求没有模型名，按资源类请求逻辑跳过白名单过滤。",

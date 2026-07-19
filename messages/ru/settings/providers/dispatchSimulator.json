@@ -43,6 +43,9 @@
     "modelRedirect": "Проверка redirect модели",
     "endpointSummary": "Сводка по эндпоинтам"
   },
+  "details": {
+    "groupCostMultiplierExceeded": "Множитель провайдера достиг лимита защиты прибыли для этой группы."
+  },
   "notes": {
     "no_group_filter": "Группы провайдеров не выбраны, поэтому фильтр групп пропущен.",
     "model_filter_skipped_for_resource_request": "Имя модели не задано, поэтому allowlist пропускается для resource-подобного запроса.",

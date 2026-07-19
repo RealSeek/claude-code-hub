@@ -10,10 +10,25 @@ import {
   Search,
 } from "lucide-react";
 import { useTranslations } from "next-intl";
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import {
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent } from "@/components/ui/collapsible";
-import { Dialog, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -25,6 +40,11 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
+import {
+  getProviderGroups,
+  type ProviderGroupWithCount,
+  updateProviderGroup,
+} from "@/lib/api-client/v1/actions/provider-groups";
 import { useDebounce } from "@/lib/hooks/use-debounce";
 import type { CurrencyCode } from "@/lib/utils/currency";
 import { parseProviderGroups, resolveProviderGroupsWithDefault } from "@/lib/utils/provider-group";
@@ -97,6 +117,7 @@ export function ProviderManager({
   const t = useTranslations("settings.providers.search");
   const tStrings = useTranslations("settings.providers");
   const tFilter = useTranslations("settings.providers.filter");
+  const tGroups = useTranslations("settings.providers.providerGroups");
   const tCommon = useTranslations("settings.common");
   const [typeFilter, setTypeFilter] = useState<ProviderType | "all">("all");
   const [sortBy, setSortBy] = useState<SortKey>("priority");
@@ -117,6 +138,10 @@ export function ProviderManager({
   const [batchActionMode, setBatchActionMode] = useState<BatchActionMode>(null);
   const [batchTestOpen, setBatchTestOpen] = useState(false);
   const [editingProviderId, setEditingProviderId] = useState<number | null>(null);
+  const [groupLimitTarget, setGroupLimitTarget] = useState<ProviderGroupWithCount | null>(null);
+  const [groupLimitDraft, setGroupLimitDraft] = useState("");
+  const [groupLimitLoading, setGroupLimitLoading] = useState(false);
+  const [groupLimitSaving, setGroupLimitSaving] = useState(false);
 
   // Helper: check if a provider has any circuit open (key-level or endpoint-level)
   const hasAnyCircuitOpen = useCallback(
@@ -188,6 +213,66 @@ export function ProviderManager({
 
   // Check if current user is admin
   const isAdmin = currentUser?.role === "admin";
+
+  const handleGroupContextMenu = useCallback(
+    async (event: ReactMouseEvent<HTMLButtonElement>, groupName: string) => {
+      if (!isAdmin) return;
+      event.preventDefault();
+      setGroupLimitLoading(true);
+      try {
+        const result = await getProviderGroups();
+        if (!result.ok) {
+          toast.error(result.error ?? tGroups("updateFailed"));
+          return;
+        }
+        const group = result.data.find((item) => item.name === groupName);
+        if (!group) {
+          toast.error(tGroups("updateFailed"));
+          return;
+        }
+        setGroupLimitTarget(group);
+        setGroupLimitDraft(
+          group.maxUpstreamMultiplier === null ? "" : String(group.maxUpstreamMultiplier)
+        );
+      } finally {
+        setGroupLimitLoading(false);
+      }
+    },
+    [isAdmin, tGroups]
+  );
+
+  const closeGroupLimitDialog = useCallback(() => {
+    if (groupLimitSaving) return;
+    setGroupLimitTarget(null);
+    setGroupLimitDraft("");
+  }, [groupLimitSaving]);
+
+  const saveGroupLimit = useCallback(async () => {
+    if (!groupLimitTarget) return;
+    const raw = groupLimitDraft.trim();
+    const maxUpstreamMultiplier = raw.length === 0 ? null : Number(raw);
+    if (
+      maxUpstreamMultiplier !== null &&
+      (!Number.isFinite(maxUpstreamMultiplier) || maxUpstreamMultiplier < 0)
+    ) {
+      toast.error(tGroups("invalidMaxUpstreamMultiplier"));
+      return;
+    }
+
+    setGroupLimitSaving(true);
+    try {
+      const result = await updateProviderGroup(groupLimitTarget.id, { maxUpstreamMultiplier });
+      if (!result.ok) {
+        toast.error(result.error ?? tGroups("updateFailed"));
+        return;
+      }
+      toast.success(tGroups("updateSuccess"));
+      setGroupLimitTarget(null);
+      setGroupLimitDraft("");
+    } finally {
+      setGroupLimitSaving(false);
+    }
+  }, [groupLimitDraft, groupLimitTarget, tGroups]);
 
   // 统一过滤逻辑：搜索 + 类型筛选 + 排序
   const filteredProviders = useMemo(() => {
@@ -472,7 +557,9 @@ export function ProviderManager({
                           prev.includes(group) ? prev.filter((g) => g !== group) : [...prev, group]
                         )
                       }
-                      disabled={loading}
+                      onContextMenu={(event) => void handleGroupContextMenu(event, group)}
+                      title={isAdmin ? tGroups("maxUpstreamMultiplier") : undefined}
+                      disabled={loading || groupLimitLoading}
                       className="h-7"
                     >
                       {group}
@@ -608,7 +695,9 @@ export function ProviderManager({
                       prev.includes(group) ? prev.filter((g) => g !== group) : [...prev, group]
                     );
                   }}
-                  disabled={loading}
+                  onContextMenu={(event) => void handleGroupContextMenu(event, group)}
+                  title={isAdmin ? tGroups("maxUpstreamMultiplier") : undefined}
+                  disabled={loading || groupLimitLoading}
                   className="h-7"
                 >
                   {group}
@@ -733,6 +822,39 @@ export function ProviderManager({
         onOpenChange={setBatchTestOpen}
         providers={selectedProviders}
       />
+
+      <Dialog
+        open={groupLimitTarget !== null}
+        onOpenChange={(open) => !open && closeGroupLimitDialog()}
+      >
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{tGroups("maxUpstreamMultiplier")}</DialogTitle>
+            <DialogDescription>{groupLimitTarget?.name}</DialogDescription>
+          </DialogHeader>
+          <div className="py-2">
+            <Input
+              type="number"
+              min={0}
+              step={0.01}
+              value={groupLimitDraft}
+              onChange={(event) => setGroupLimitDraft(event.target.value)}
+              placeholder={tGroups("maxUpstreamMultiplierPlaceholder")}
+              disabled={groupLimitSaving}
+              autoFocus
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={closeGroupLimitDialog} disabled={groupLimitSaving}>
+              {tGroups("cancel")}
+            </Button>
+            <Button onClick={() => void saveGroupLimit()} disabled={groupLimitSaving}>
+              {groupLimitSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              {tGroups("save")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={editingProvider != null}

@@ -193,6 +193,7 @@ export interface ProviderChainItem {
         | "type_mismatch"
         | "model_not_allowed"
         | "schedule_inactive" // 供应商不在调度时间窗口内
+        | "group_cost_multiplier_exceeded" // 上游倍率达到当前分组的盈利保护阈值
         | "disabled"
         | "client_restriction"; // Provider filtered due to client restriction
       details?: string; // 额外信息（如费用：$15.2/$15）

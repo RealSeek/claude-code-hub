@@ -18658,6 +18658,8 @@ export interface operations {
                             name: string;
                             /** @description Group cost multiplier. */
                             costMultiplier: number;
+                            /** @description Optional maximum upstream multiplier before provider exclusion. */
+                            maxUpstreamMultiplier: number | null;
                             /** @description Optional group description. */
                             description: string | null;
                             /** @description Number of providers using the group. */
@@ -18843,6 +18845,8 @@ export interface operations {
                     name: string;
                     /** @description Group cost multiplier. */
                     costMultiplier?: number;
+                    /** @description Optional maximum upstream multiplier. */
+                    maxUpstreamMultiplier?: number | null;
                     /** @description Optional group description. */
                     description?: string;
                 };
@@ -18862,6 +18866,8 @@ export interface operations {
                         name: string;
                         /** @description Group cost multiplier. */
                         costMultiplier: number;
+                        /** @description Optional maximum upstream multiplier before provider exclusion. */
+                        maxUpstreamMultiplier: number | null;
                         /** @description Optional group description. */
                         description: string | null;
                         /** @description Number of providers using the group. */
@@ -19219,6 +19225,8 @@ export interface operations {
                 "application/json": {
                     /** @description Group cost multiplier. */
                     costMultiplier?: number;
+                    /** @description Optional maximum upstream multiplier. */
+                    maxUpstreamMultiplier?: number | null;
                     /** @description Optional group description. */
                     description?: string | null;
                     /** @description Optional plain description note. */
@@ -19240,6 +19248,8 @@ export interface operations {
                         name: string;
                         /** @description Group cost multiplier. */
                         costMultiplier: number;
+                        /** @description Optional maximum upstream multiplier before provider exclusion. */
+                        maxUpstreamMultiplier: number | null;
                         /** @description Optional group description. */
                         description: string | null;
                         /** @description Number of providers using the group. */

@@ -1,5 +1,6 @@
 import "server-only";
 
+import { emitActionAudit } from "@/lib/audit/emit";
 import { publishProviderCacheInvalidation } from "@/lib/cache/provider-cache";
 import { clearConfigCache } from "@/lib/circuit-breaker";
 import { logger } from "@/lib/logger";
@@ -10,12 +11,15 @@ import {
   type ProviderUpstreamBillingResult,
   probeProviderUpstreamBilling,
 } from "@/lib/provider-upstream-billing";
+import { resolveProviderGroupsWithDefault } from "@/lib/utils/provider-group";
 import {
   claimProviderUpstreamBillingRefresh,
+  disableProviderAtUpstreamMultiplierLimit,
   findProviderById,
   updateProviderUpstreamBillingSnapshot,
   updateProviderUpstreamBillingTokens,
 } from "@/repository/provider";
+import { getGroupBillingPolicy } from "@/repository/provider-groups";
 import type { Provider } from "@/types/provider";
 
 const MAX_CONCURRENT_PROBES = 6;
@@ -306,9 +310,71 @@ export async function refreshProviderUpstreamBilling(
     };
   }
 
-  if (multiplierSynced) {
+  let autoDisabled = false;
+  let appliedGroupPolicy: Awaited<ReturnType<typeof getGroupBillingPolicy>> | null = null;
+  if (nextMultiplier !== null) {
+    try {
+      const effectiveGroups = resolveProviderGroupsWithDefault(provider.groupTag);
+      appliedGroupPolicy = await getGroupBillingPolicy(effectiveGroups.join(","));
+      const limit = appliedGroupPolicy.maxUpstreamMultiplier;
+      if (limit !== null && Number.isFinite(limit) && nextMultiplier >= limit) {
+        autoDisabled = await disableProviderAtUpstreamMultiplierLimit(providerId, limit);
+      }
+    } catch (error) {
+      logger.warn("Provider upstream multiplier auto-disable evaluation failed", {
+        providerId,
+        groupTag: provider.groupTag,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (multiplierSynced || autoDisabled) {
     clearConfigCache(providerId);
     await publishProviderCacheInvalidation();
+  }
+
+  if (multiplierSynced) {
+    emitActionAudit({
+      category: "provider",
+      action: "provider.cost_multiplier.sync",
+      targetType: "provider",
+      targetId: String(provider.id),
+      targetName: provider.name,
+      before: {
+        costMultiplier: provider.costMultiplier,
+      },
+      after: {
+        costMultiplier: nextMultiplier,
+        source: options.source,
+        billingSource: billing.source,
+        groupTag: provider.groupTag,
+      },
+      success: true,
+    });
+  }
+
+  if (autoDisabled) {
+    emitActionAudit({
+      category: "provider",
+      action: "provider.upstream_multiplier.auto_disable",
+      targetType: "provider",
+      targetId: String(provider.id),
+      targetName: provider.name,
+      before: {
+        isEnabled: true,
+        costMultiplier: provider.costMultiplier,
+      },
+      after: {
+        isEnabled: false,
+        costMultiplier: nextMultiplier,
+        groupName: appliedGroupPolicy?.groupName,
+        maxUpstreamMultiplier: appliedGroupPolicy?.maxUpstreamMultiplier,
+        source: options.source,
+        billingSource: billing.source,
+      },
+      success: true,
+    });
   }
 
   logger.info("Provider upstream billing refreshed", {
@@ -317,6 +383,7 @@ export async function refreshProviderUpstreamBilling(
     billingSource: billing.source,
     status: billing.status,
     multiplierSynced,
+    autoDisabled,
   });
 
   return {

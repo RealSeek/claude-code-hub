@@ -46,7 +46,13 @@
       "create": "Create provider",
       "update": "Update provider",
       "delete": "Delete provider",
-      "key_reveal": "Reveal provider key"
+      "key_reveal": "Reveal provider key",
+      "cost_multiplier": {
+        "sync": "Synchronize provider cost multiplier"
+      },
+      "upstream_multiplier": {
+        "auto_disable": "Automatically disable provider at upstream multiplier limit"
+      }
     },
     "provider_group": {
       "create": "Create provider group",

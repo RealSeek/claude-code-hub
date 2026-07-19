@@ -179,6 +179,7 @@ export const providerGroups = pgTable('provider_groups', {
   id: serial('id').primaryKey(),
   name: varchar('name', { length: 200 }).notNull().unique(),
   costMultiplier: numeric('cost_multiplier', { precision: 10, scale: 4 }).notNull().default('1.0'),
+  maxUpstreamMultiplier: numeric('max_upstream_multiplier', { precision: 10, scale: 4 }),
   description: text('description'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),

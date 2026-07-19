@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, ne, or, sql } from "drizzle-orm";
 import { db } from "@/drizzle/db";
 import { providerApiKeys, providerEndpoints, providers } from "@/drizzle/schema";
 import { normalizeAllowedModelRules } from "@/lib/allowed-model-rules";
@@ -1224,6 +1224,29 @@ export async function updateProviderUpstreamBillingSnapshot(
       ...(costMultiplier !== undefined ? { costMultiplier: costMultiplier.toString() } : {}),
     })
     .where(and(eq(providers.id, providerId), isNull(providers.deletedAt)))
+    .returning({ id: providers.id });
+  return updated.length > 0;
+}
+
+/** 当数据库中的最新倍率达到分组上限时，原子关闭仍处于启用状态的供应商。 */
+export async function disableProviderAtUpstreamMultiplierLimit(
+  providerId: number,
+  maxUpstreamMultiplier: number
+): Promise<boolean> {
+  const updated = await db
+    .update(providers)
+    .set({
+      isEnabled: false,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(providers.id, providerId),
+        eq(providers.isEnabled, true),
+        gte(providers.costMultiplier, maxUpstreamMultiplier.toString()),
+        isNull(providers.deletedAt)
+      )
+    )
     .returning({ id: providers.id });
   return updated.length > 0;
 }

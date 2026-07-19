@@ -5,6 +5,7 @@ import {
   checkFormatProviderTypeCompatibility,
   checkProviderGroupMatch,
   isProviderActiveNow,
+  isProviderWithinGroupBillingPolicy,
   ProxyProviderResolver,
   providerSupportsModel,
 } from "@/app/v1/_lib/proxy/provider-selector";
@@ -28,6 +29,7 @@ import {
 import { resolveSystemTimezone } from "@/lib/utils/timezone";
 import { isVendorTypeCircuitOpen } from "@/lib/vendor-type-circuit-breaker";
 import { findAllProvidersFresh } from "@/repository/provider";
+import { getGroupBillingPolicy } from "@/repository/provider-groups";
 import type {
   DispatchSimulatorEndpointStats,
   DispatchSimulatorInput,
@@ -255,6 +257,7 @@ export async function simulateDispatchDecisionTree(
 ): Promise<DispatchSimulatorResult> {
   const normalizedModelName = input.modelName.trim();
   const groupFilter = getGroupFilterValue(input.groupTags);
+  const groupBillingPolicy = await getGroupBillingPolicy(groupFilter);
   const systemTimezone = options?.systemTimezone ?? (await resolveSystemTimezone());
   const steps: DispatchSimulatorStep[] = [];
 
@@ -303,7 +306,10 @@ export async function simulateDispatchDecisionTree(
   );
   currentProviders = formatCompatible;
 
-  const enabledProviders = currentProviders.filter((provider) => provider.isEnabled);
+  const enabledProviders = currentProviders.filter(
+    (provider) =>
+      provider.isEnabled && isProviderWithinGroupBillingPolicy(provider, groupBillingPolicy)
+  );
   steps.push(
     buildStep(
       "enabledCheck",
@@ -313,7 +319,9 @@ export async function simulateDispatchDecisionTree(
       currentProviders
         .filter((provider) => !enabledProviders.some((survivor) => survivor.id === provider.id))
         .map((provider) =>
-          buildProviderSnapshot(provider, groupFilter, { details: "provider_disabled" })
+          buildProviderSnapshot(provider, groupFilter, {
+            details: !provider.isEnabled ? "provider_disabled" : "group_cost_multiplier_exceeded",
+          })
         ),
       groupFilter
     )

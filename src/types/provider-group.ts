@@ -6,6 +6,7 @@ export interface ProviderGroup {
   id: number;
   name: string;
   costMultiplier: number;
+  maxUpstreamMultiplier: number | null;
   description: string | null;
   createdAt: Date;
   updatedAt: Date;
@@ -17,6 +18,7 @@ export interface ProviderGroup {
 export interface CreateProviderGroupInput {
   name: string;
   costMultiplier?: number;
+  maxUpstreamMultiplier?: number | null;
   description?: string | null;
 }
 
@@ -25,5 +27,6 @@ export interface CreateProviderGroupInput {
  */
 export interface UpdateProviderGroupInput {
   costMultiplier?: number;
+  maxUpstreamMultiplier?: number | null;
   description?: string | null;
 }

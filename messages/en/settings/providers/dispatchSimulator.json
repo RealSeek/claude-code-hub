@@ -43,6 +43,9 @@
     "modelRedirect": "Model Redirect Preview",
     "endpointSummary": "Endpoint Summary"
   },
+  "details": {
+    "groupCostMultiplierExceeded": "The provider upstream multiplier reached this group's profit protection limit."
+  },
   "notes": {
     "no_group_filter": "No provider groups were selected, so the group filter was skipped.",
     "model_filter_skipped_for_resource_request": "The request has no model name, so allowlist filtering is skipped for resource-style requests.",
