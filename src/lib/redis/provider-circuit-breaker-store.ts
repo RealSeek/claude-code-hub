@@ -50,12 +50,27 @@ local maxOpenMs = tonumber(ARGV[11])
 local halfOpenSuccessThreshold = tonumber(ARGV[12])
 local ttlSeconds = tonumber(ARGV[13])
 
+local function toNum(v, default)
+  local n = tonumber(v)
+  if n == nil then return default end
+  return n
+end
+
 local circuitState = redis.call('HGET', stateKey, 'circuitState') or 'closed'
-local failureCount = tonumber(redis.call('HGET', stateKey, 'failureCount') or '0')
-local lastFailureTime = tonumber(redis.call('HGET', stateKey, 'lastFailureTime') or '0')
-local circuitOpenUntil = tonumber(redis.call('HGET', stateKey, 'circuitOpenUntil') or '0')
-local halfOpenSuccessCount = tonumber(redis.call('HGET', stateKey, 'halfOpenSuccessCount') or '0')
-local openCount = tonumber(redis.call('HGET', stateKey, 'openCount') or '0')
+if circuitState == '' then circuitState = 'closed' end
+local failureCount = toNum(redis.call('HGET', stateKey, 'failureCount'), 0)
+local lastFailureTime = toNum(redis.call('HGET', stateKey, 'lastFailureTime'), 0)
+local circuitOpenUntil = toNum(redis.call('HGET', stateKey, 'circuitOpenUntil'), 0)
+local halfOpenSuccessCount = toNum(redis.call('HGET', stateKey, 'halfOpenSuccessCount'), 0)
+local openCount = toNum(redis.call('HGET', stateKey, 'openCount'), 0)
+windowMs = toNum(windowMs, 60000)
+minSamples = toNum(minSamples, 20)
+failureRateThreshold = toNum(failureRateThreshold, 0.4)
+consecutiveThreshold = toNum(consecutiveThreshold, 8)
+baseOpenMs = toNum(baseOpenMs, 60000)
+maxOpenMs = toNum(maxOpenMs, 1800000)
+halfOpenSuccessThreshold = toNum(halfOpenSuccessThreshold, 2)
+ttlSeconds = toNum(ttlSeconds, 86400)
 local opened = 0
 local recovered = 0
 local ownsPermit = 0
@@ -167,8 +182,18 @@ local token = ARGV[2]
 local leaseMs = tonumber(ARGV[3])
 local maxConcurrency = tonumber(ARGV[4])
 local ttlSeconds = tonumber(ARGV[5])
+local function toNum(v, default)
+  local n = tonumber(v)
+  if n == nil then return default end
+  return n
+end
+
 local circuitState = redis.call('HGET', stateKey, 'circuitState') or 'closed'
-local circuitOpenUntil = tonumber(redis.call('HGET', stateKey, 'circuitOpenUntil') or '0')
+if circuitState == '' then circuitState = 'closed' end
+local circuitOpenUntil = toNum(redis.call('HGET', stateKey, 'circuitOpenUntil'), 0)
+leaseMs = toNum(leaseMs, 120000)
+maxConcurrency = toNum(maxConcurrency, 2)
+ttlSeconds = toNum(ttlSeconds, 86400)
 
 if circuitState == 'open' and circuitOpenUntil > 0 and now >= circuitOpenUntil then
   circuitState = 'half-open'
