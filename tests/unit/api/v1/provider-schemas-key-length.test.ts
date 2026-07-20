@@ -107,6 +107,16 @@ describe("v1 Provider schemas - API 密钥长度限制", () => {
     expect("upstreamBillingCookie" in ProviderSummarySchema.shape).toBe(false);
   });
 
+  test("ProviderCreateSchema 接受表单为空时提交的上游计费用户 ID", () => {
+    const created = ProviderCreateSchema.parse({
+      ...createBase,
+      key: "sk-test",
+      upstream_billing_user_id: null,
+    });
+
+    expect(created.upstream_billing_user_id).toBeNull();
+  });
+
   test("主动更新间隔默认 30 分钟，支持 0 关闭并拒绝越界值", () => {
     const created = ProviderCreateSchema.parse({ ...createBase, key: "sk-test" });
     expect(created.upstream_billing_refresh_interval_minutes).toBe(30);
