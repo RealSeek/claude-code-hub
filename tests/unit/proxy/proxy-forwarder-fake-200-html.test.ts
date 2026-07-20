@@ -58,6 +58,7 @@ vi.mock("@/lib/circuit-breaker", () => ({
   getProviderHealthInfo: mocks.getProviderHealthInfo,
   recordFailure: mocks.recordFailure,
   recordSuccess: mocks.recordSuccess,
+  tryAcquireProviderCircuitPermit: vi.fn(async () => ({ allowed: true, permitToken: null })),
 }));
 
 vi.mock("@/lib/vendor-type-circuit-breaker", () => ({
@@ -247,14 +248,14 @@ describe("ProxyForwarder - fake 200 HTML body", () => {
     expect(mocks.pickRandomProviderWithExclusion).toHaveBeenCalledWith(session, [1]);
     expect(mocks.recordFailure).toHaveBeenCalledWith(
       1,
-      expect.objectContaining({ message: "FAKE_200_HTML_BODY" })
+      expect.objectContaining({ message: "FAKE_200_HTML_BODY" }),
+      expect.objectContaining({ requestStartedAt: expect.any(Number) })
     );
     const failure1 = mocks.recordFailure.mock.calls[0]?.[1];
     expect(failure1).toBeInstanceOf(ProxyError);
     expect((failure1 as ProxyError).getClientSafeMessage()).toContain("HTML document");
     expect((failure1 as ProxyError).getClientSafeMessage()).toContain("Upstream detail:");
-    expect(mocks.recordSuccess).toHaveBeenCalledWith(2);
-    expect(mocks.recordSuccess).not.toHaveBeenCalledWith(1);
+    expect(mocks.recordSuccess).not.toHaveBeenCalled();
   });
 
   test("200 + text/html 但 body 是 JSON error 也应视为失败并切换供应商", async () => {
@@ -302,7 +303,8 @@ describe("ProxyForwarder - fake 200 HTML body", () => {
     expect(mocks.pickRandomProviderWithExclusion).toHaveBeenCalledWith(session, [1]);
     expect(mocks.recordFailure).toHaveBeenCalledWith(
       1,
-      expect.objectContaining({ message: "FAKE_200_JSON_ERROR_NON_EMPTY" })
+      expect.objectContaining({ message: "FAKE_200_JSON_ERROR_NON_EMPTY" }),
+      expect.objectContaining({ requestStartedAt: expect.any(Number) })
     );
     const failure2 = mocks.recordFailure.mock.calls[0]?.[1];
     expect(failure2).toBeInstanceOf(ProxyError);
@@ -311,8 +313,7 @@ describe("ProxyForwarder - fake 200 HTML body", () => {
     expect((failure2 as ProxyError).getClientSafeMessage()).toContain("upstream blocked");
     expect((failure2 as ProxyError).upstreamError?.rawBody).toBe(jsonErrorBody);
     expect((failure2 as ProxyError).upstreamError?.rawBodyTruncated).toBe(false);
-    expect(mocks.recordSuccess).toHaveBeenCalledWith(2);
-    expect(mocks.recordSuccess).not.toHaveBeenCalledWith(1);
+    expect(mocks.recordSuccess).not.toHaveBeenCalled();
   });
 
   test("200 + application/json 且有 Content-Length 的 JSON error 也应视为失败并切换供应商", async () => {
@@ -359,7 +360,8 @@ describe("ProxyForwarder - fake 200 HTML body", () => {
     expect(mocks.pickRandomProviderWithExclusion).toHaveBeenCalledWith(session, [1]);
     expect(mocks.recordFailure).toHaveBeenCalledWith(
       1,
-      expect.objectContaining({ message: "FAKE_200_JSON_ERROR_NON_EMPTY" })
+      expect.objectContaining({ message: "FAKE_200_JSON_ERROR_NON_EMPTY" }),
+      expect.objectContaining({ requestStartedAt: expect.any(Number) })
     );
     const failure3 = mocks.recordFailure.mock.calls[0]?.[1];
     expect(failure3).toBeInstanceOf(ProxyError);
@@ -368,8 +370,7 @@ describe("ProxyForwarder - fake 200 HTML body", () => {
     expect((failure3 as ProxyError).getClientSafeMessage()).toContain("upstream blocked");
     expect((failure3 as ProxyError).upstreamError?.rawBody).toBe(jsonErrorBody);
     expect((failure3 as ProxyError).upstreamError?.rawBodyTruncated).toBe(false);
-    expect(mocks.recordSuccess).toHaveBeenCalledWith(2);
-    expect(mocks.recordSuccess).not.toHaveBeenCalledWith(1);
+    expect(mocks.recordSuccess).not.toHaveBeenCalled();
   });
 
   test("假200 JSON error 命中 rate limit 关键字时，应推断为 429 并在决策链中标记为推断", async () => {
@@ -411,7 +412,8 @@ describe("ProxyForwarder - fake 200 HTML body", () => {
 
     expect(mocks.recordFailure).toHaveBeenCalledWith(
       1,
-      expect.objectContaining({ message: "FAKE_200_JSON_ERROR_NON_EMPTY" })
+      expect.objectContaining({ message: "FAKE_200_JSON_ERROR_NON_EMPTY" }),
+      expect.objectContaining({ requestStartedAt: expect.any(Number) })
     );
 
     const failure = mocks.recordFailure.mock.calls[0]?.[1];
@@ -477,14 +479,14 @@ describe("ProxyForwarder - fake 200 HTML body", () => {
     expect(mocks.pickRandomProviderWithExclusion).toHaveBeenCalledWith(session, [1]);
     expect(mocks.recordFailure).toHaveBeenCalledWith(
       1,
-      expect.objectContaining({ message: "FAKE_200_HTML_BODY" })
+      expect.objectContaining({ message: "FAKE_200_HTML_BODY" }),
+      expect.objectContaining({ requestStartedAt: expect.any(Number) })
     );
 
     const failure = mocks.recordFailure.mock.calls[0]?.[1];
     expect(failure).toBeInstanceOf(ProxyError);
     expect((failure as ProxyError).upstreamError?.rawBody).toBe(htmlErrorBody);
-    expect(mocks.recordSuccess).toHaveBeenCalledWith(2);
-    expect(mocks.recordSuccess).not.toHaveBeenCalledWith(1);
+    expect(mocks.recordSuccess).not.toHaveBeenCalled();
   });
 
   test("缺少 content 字段（missing_content）不应被 JSON 解析 catch 吞掉，应触发切换供应商", async () => {
@@ -531,10 +533,10 @@ describe("ProxyForwarder - fake 200 HTML body", () => {
     expect(mocks.pickRandomProviderWithExclusion).toHaveBeenCalledWith(session, [1]);
     expect(mocks.recordFailure).toHaveBeenCalledWith(
       1,
-      expect.objectContaining({ reason: "missing_content" })
+      expect.objectContaining({ reason: "missing_content" }),
+      expect.objectContaining({ requestStartedAt: expect.any(Number) })
     );
-    expect(mocks.recordSuccess).toHaveBeenCalledWith(2);
-    expect(mocks.recordSuccess).not.toHaveBeenCalledWith(1);
+    expect(mocks.recordSuccess).not.toHaveBeenCalled();
   });
 });
 

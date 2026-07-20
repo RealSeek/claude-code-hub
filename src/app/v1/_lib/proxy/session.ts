@@ -1,5 +1,6 @@
 import type { Context } from "hono";
 import { logger } from "@/lib/logger";
+import { releaseProviderCircuitPermit } from "@/lib/redis/provider-circuit-breaker-store";
 import { writeLiveChain } from "@/lib/redis/live-chain-store";
 import { clientRequestsContext1m as clientRequestsContext1mHelper } from "@/lib/special-attributes";
 import {
@@ -206,6 +207,9 @@ export class ProxySession {
   // 失败切换 provider 时只能释放这里记录过的引用，避免 hedge/fallback 释放未 acquire 的 Redis 计数。
   private providerSessionRefs = new Set<number>();
 
+  // Half-open circuit permits are request-scoped and settled with the final provider outcome.
+  private providerCircuitPermits = new Map<number, string>();
+
   private constructor(init: {
     startTime: number;
     method: string;
@@ -343,6 +347,12 @@ export class ProxySession {
   }
 
   setProvider(provider: Provider | null): void {
+    if (this.provider && this.provider.id !== provider?.id) {
+      const stalePermit = this.consumeProviderCircuitPermit(this.provider.id);
+      if (stalePermit) {
+        void releaseProviderCircuitPermit(this.provider.id, stalePermit);
+      }
+    }
     this.provider = provider;
     if (provider) {
       this.providerType = provider.providerType as ProviderType;
@@ -366,6 +376,26 @@ export class ProxySession {
 
     this.providerSessionRefs.delete(providerId);
     return true;
+  }
+
+  recordProviderCircuitPermit(providerId: number, permitToken: string | null): void {
+    if (!permitToken) return;
+    if (!this.providerCircuitPermits) this.providerCircuitPermits = new Map<number, string>();
+    this.providerCircuitPermits.set(providerId, permitToken);
+  }
+
+  consumeProviderCircuitPermit(providerId: number): string | null {
+    const token = this.providerCircuitPermits?.get(providerId) ?? null;
+    if (token) this.providerCircuitPermits?.delete(providerId);
+    return token;
+  }
+
+  async releaseUnsettledProviderCircuitPermits(): Promise<void> {
+    const permits = [...(this.providerCircuitPermits?.entries() ?? [])];
+    this.providerCircuitPermits?.clear();
+    await Promise.all(
+      permits.map(([providerId, token]) => releaseProviderCircuitPermit(providerId, token))
+    );
   }
 
   setCacheTtlResolved(ttl: CacheTtlResolved | null): void {

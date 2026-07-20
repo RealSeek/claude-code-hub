@@ -897,6 +897,9 @@ async function finalizeDeferredStreamingFinalizationIfNeeded(
 ): Promise<FinalizeDeferredStreamingResult> {
   const meta = consumeDeferredStreamingFinalization(session);
   const provider = session.provider;
+  const releaseUnsettledPermits = async () => {
+    await session.releaseUnsettledProviderCircuitPermits?.();
+  };
   const clearSessionBinding = async () => {
     if (!session.sessionId) return;
     await SessionManager.clearSessionProvider(session.sessionId);
@@ -1062,6 +1065,8 @@ async function finalizeDeferredStreamingFinalizationIfNeeded(
           body: allContent,
           providerKeyId: meta.selectedApiKeyId,
           provider: providerForChain,
+          requestStartedAt: session.startTime,
+          circuitPermitToken: session.consumeProviderCircuitPermit?.(meta.providerId),
         });
       } catch (cbError) {
         logger.warn("[ResponseHandler] Failed to record streaming failure in circuit breaker", {
@@ -1086,6 +1091,7 @@ async function finalizeDeferredStreamingFinalizationIfNeeded(
       errorMessage: errorMessage ?? undefined,
     });
 
+    await releaseUnsettledPermits();
     return {
       effectiveStatusCode,
       errorMessage,
@@ -1125,6 +1131,8 @@ async function finalizeDeferredStreamingFinalizationIfNeeded(
           body: allContent,
           providerKeyId: meta.selectedApiKeyId,
           provider: providerForChain,
+          requestStartedAt: session.startTime,
+          circuitPermitToken: session.consumeProviderCircuitPermit?.(meta.providerId),
         });
       } catch (cbError) {
         logger.warn("[ResponseHandler] Failed to record fake-200 error in circuit breaker", {
@@ -1153,6 +1161,7 @@ async function finalizeDeferredStreamingFinalizationIfNeeded(
       errorMessage: detected.detail ? `${detected.code}: ${detected.detail}` : detected.code,
     });
 
+    await releaseUnsettledPermits();
     return {
       effectiveStatusCode,
       errorMessage,
@@ -1188,6 +1197,8 @@ async function finalizeDeferredStreamingFinalizationIfNeeded(
           body: allContent,
           providerKeyId: meta.selectedApiKeyId,
           provider: providerForChain,
+          requestStartedAt: session.startTime,
+          circuitPermitToken: session.consumeProviderCircuitPermit?.(meta.providerId),
         });
       } catch (cbError) {
         logger.warn("[ResponseHandler] Failed to record non-200 error in circuit breaker", {
@@ -1212,6 +1223,7 @@ async function finalizeDeferredStreamingFinalizationIfNeeded(
       errorMessage: errorMessage,
     });
 
+    await releaseUnsettledPermits();
     return {
       effectiveStatusCode,
       errorMessage,
@@ -1245,11 +1257,12 @@ async function finalizeDeferredStreamingFinalizationIfNeeded(
       recordProviderApiKeySuccess(meta.selectedApiKeyId, session.startTime);
     }
     const { recordSuccess } = await import("@/lib/circuit-breaker");
-    if (session.ttfbMs == null) {
-      await recordSuccess(meta.providerId);
-    } else {
-      await recordSuccess(meta.providerId, session.ttfbMs, session.startTime);
-    }
+    await recordSuccess(
+      meta.providerId,
+      session.ttfbMs,
+      session.startTime,
+      session.consumeProviderCircuitPermit?.(meta.providerId)
+    );
   } catch (cbError) {
     logger.warn("[ResponseHandler] Failed to record streaming success in circuit breaker", {
       providerId: meta.providerId,
@@ -1326,6 +1339,7 @@ async function finalizeDeferredStreamingFinalizationIfNeeded(
     statusCode: meta.upstreamStatusCode,
   });
 
+  await releaseUnsettledPermits();
   return {
     effectiveStatusCode,
     errorMessage,
@@ -1500,6 +1514,8 @@ export class ProxyResponseHandler {
                     statusCode,
                     headers: response.headers,
                     body: responseText,
+                    requestStartedAt: session.startTime,
+                    circuitPermitToken: session.consumeProviderCircuitPermit?.(provider.id),
                   });
                 } catch (cbError) {
                   logger.warn(
@@ -1519,6 +1535,14 @@ export class ProxyResponseHandler {
                 statusCode: statusCode,
                 errorMessage: errorMessageForFinalize,
               });
+            } else if (session.getEndpointPolicy().allowCircuitBreakerAccounting) {
+              const { recordSuccess } = await import("@/lib/circuit-breaker");
+              await recordSuccess(
+                provider.id,
+                session.ttfbMs,
+                session.startTime,
+                session.consumeProviderCircuitPermit?.(provider.id)
+              );
             }
 
             // 使用共享的统计处理方法
@@ -1911,6 +1935,8 @@ export class ProxyResponseHandler {
                 statusCode,
                 headers: response.headers,
                 body: responseText,
+                requestStartedAt: session.startTime,
+                circuitPermitToken: session.consumeProviderCircuitPermit?.(provider.id),
               });
             } catch (cbError) {
               logger.warn("ResponseHandler: Failed to record non-200 error in circuit breaker", {
@@ -1927,6 +1953,14 @@ export class ProxyResponseHandler {
             statusCode: statusCode,
             errorMessage: errorMessageForDb,
           });
+        } else if (session.getEndpointPolicy().allowCircuitBreakerAccounting) {
+          const { recordSuccess } = await import("@/lib/circuit-breaker");
+          await recordSuccess(
+            provider.id,
+            session.ttfbMs,
+            session.startTime,
+            session.consumeProviderCircuitPermit?.(provider.id)
+          );
         }
 
         if (messageContext) {
@@ -2009,7 +2043,10 @@ export class ProxyResponseHandler {
             if (session.getEndpointPolicy().allowCircuitBreakerAccounting) {
               try {
                 const { recordFailure } = await import("@/lib/circuit-breaker");
-                await recordFailure(provider.id, err);
+                await recordFailure(provider.id, err, {
+                  requestStartedAt: session.startTime,
+                  circuitPermitToken: session.consumeProviderCircuitPermit?.(provider.id),
+                });
                 logger.debug("ResponseHandler: Response timeout recorded in circuit breaker", {
                   providerId: provider.id,
                 });

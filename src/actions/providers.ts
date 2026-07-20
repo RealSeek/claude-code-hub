@@ -1365,6 +1365,10 @@ export async function getProvidersHealthStatus() {
         lastFailureTime: number | null;
         circuitOpenUntil: number | null;
         recoveryMinutes: number | null; // 距离恢复的分钟数
+        windowRequestCount: number;
+        windowFailureCount: number;
+        windowFailureRate: number;
+        halfOpenInFlight: number;
       }
     > = {};
 
@@ -1377,6 +1381,10 @@ export async function getProvidersHealthStatus() {
         recoveryMinutes: health.circuitOpenUntil
           ? Math.ceil((health.circuitOpenUntil - Date.now()) / 60000)
           : null,
+        windowRequestCount: health.windowRequestCount ?? 0,
+        windowFailureCount: health.windowFailureCount ?? 0,
+        windowFailureRate: health.windowFailureRate ?? 0,
+        halfOpenInFlight: health.halfOpenInFlight ?? 0,
       };
     });
 

@@ -256,7 +256,7 @@ describe("circuit-breaker", () => {
       },
       config: {
         loadProviderCircuitConfig: vi.fn(async () => ({
-          failureThreshold: 2,
+          failureThreshold: 8,
           openDuration: 300000,
           halfOpenSuccessThreshold: 2,
         })),
@@ -265,12 +265,13 @@ describe("circuit-breaker", () => {
 
     const { recordFailure } = await import("@/lib/circuit-breaker");
 
-    await recordFailure(1, new Error("boom"));
-    await recordFailure(1, new Error("boom"));
+    for (let index = 0; index < 8; index++) {
+      await recordFailure(1, new Error("boom"));
+    }
 
     expect(redisState?.circuitState).toBe("open");
     const openUntil = redisState?.circuitOpenUntil;
-    expect(openUntil).toBe(Date.now() + 300000);
+    expect(openUntil).toBe(Date.now() + 60_000);
 
     vi.advanceTimersByTime(1000);
 
