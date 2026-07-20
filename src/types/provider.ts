@@ -599,6 +599,11 @@ export interface ProviderDisplay {
  * Provider statistics loaded asynchronously
  * Used by getProviderStatisticsAsync() return type
  */
+export interface ProviderTtfbSample {
+  ttfbMs: number;
+  at: string;
+}
+
 export interface ProviderStatistics {
   todayCost: string;
   todayCalls: number;
@@ -606,6 +611,11 @@ export interface ProviderStatistics {
   lastCallModel: string | null;
   recentAvgTtfbMs?: number | null;
   recentTtfbSamples?: number;
+  recentMinTtfbMs?: number | null;
+  recentMaxTtfbMs?: number | null;
+  recentP50TtfbMs?: number | null;
+  recentP95TtfbMs?: number | null;
+  recentTtfbSampleDetails?: ProviderTtfbSample[];
 }
 
 /**

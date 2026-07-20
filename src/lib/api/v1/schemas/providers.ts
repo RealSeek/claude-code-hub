@@ -205,6 +205,18 @@ export const ProviderSummarySchema = z
           .number()
           .int()
           .describe("Successful TTFB sample count in the last 5 minutes."),
+        recentMinTtfbMs: z.number().nullable().optional(),
+        recentMaxTtfbMs: z.number().nullable().optional(),
+        recentP50TtfbMs: z.number().nullable().optional(),
+        recentP95TtfbMs: z.number().nullable().optional(),
+        recentTtfbSampleDetails: z
+          .array(
+            z.object({
+              ttfbMs: z.number(),
+              at: z.string(),
+            })
+          )
+          .optional(),
       })
       .optional()
       .describe("Today statistics. Present only when include=statistics is requested."),

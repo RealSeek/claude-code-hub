@@ -95,6 +95,67 @@ function formatLatency(ms: number | null | undefined): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
+function formatSampleTime(at: string): string {
+  const date = new Date(at);
+  if (Number.isNaN(date.getTime())) return at;
+  return date.toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+}
+
+function RecentTtfbTooltipBody({
+  statistics,
+  tList,
+}: {
+  statistics?: ProviderStatistics;
+  tList: (key: string, values?: Record<string, string | number | Date>) => string;
+}) {
+  const samples = statistics?.recentTtfbSampleDetails ?? [];
+  const hasSummary =
+    statistics?.recentAvgTtfbMs != null &&
+    Number.isFinite(statistics.recentAvgTtfbMs) &&
+    (statistics.recentTtfbSamples ?? 0) > 0;
+
+  if (!hasSummary) {
+    return <div className="text-xs">{tList("recentTtfbNoData")}</div>;
+  }
+
+  return (
+    <div className="space-y-2 text-xs">
+      <div className="font-medium">{tList("recentTtfbDetailTitle")}</div>
+      <div className="grid grid-cols-2 gap-x-3 gap-y-1 tabular-nums">
+        <span>{tList("recentTtfbAvg", { latency: formatLatency(statistics.recentAvgTtfbMs) })}</span>
+        <span>{tList("recentTtfbSampleCount", { count: statistics.recentTtfbSamples ?? 0 })}</span>
+        <span>{tList("recentTtfbMin", { latency: formatLatency(statistics.recentMinTtfbMs) })}</span>
+        <span>{tList("recentTtfbMax", { latency: formatLatency(statistics.recentMaxTtfbMs) })}</span>
+        <span>{tList("recentTtfbP50", { latency: formatLatency(statistics.recentP50TtfbMs) })}</span>
+        <span>{tList("recentTtfbP95", { latency: formatLatency(statistics.recentP95TtfbMs) })}</span>
+      </div>
+      <div className="border-t border-border/60 pt-2">
+        <div className="mb-1 text-muted-foreground">{tList("recentTtfbRecentSamples")}</div>
+        {samples.length === 0 ? (
+          <div className="text-muted-foreground">{tList("recentTtfbNoSampleDetails")}</div>
+        ) : (
+          <div className="max-h-40 space-y-0.5 overflow-y-auto pr-1">
+            {samples.map((sample, index) => (
+              <div
+                key={`${sample.at}-${sample.ttfbMs}-${index}`}
+                className="flex items-center justify-between gap-3 font-mono tabular-nums"
+              >
+                <span className="text-muted-foreground">{formatSampleTime(sample.at)}</span>
+                <span>{formatLatency(sample.ttfbMs)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 interface ProviderRichListItemProps {
   provider: ProviderDisplay;
   vendor?: ProviderVendor;
@@ -715,12 +776,19 @@ function ProviderRichListItemInner({
           ) : statistics?.recentAvgTtfbMs !== null &&
             statistics?.recentAvgTtfbMs !== undefined &&
             (statistics.recentTtfbSamples ?? 0) > 0 ? (
-            <span className="font-medium tabular-nums">
-              {tList("recentTtfbSummary", {
-                latency: formatLatency(statistics.recentAvgTtfbMs),
-                samples: statistics.recentTtfbSamples ?? 0,
-              })}
-            </span>
+            <Tooltip delayDuration={200}>
+              <TooltipTrigger asChild>
+                <span className="cursor-help font-medium tabular-nums underline decoration-dotted underline-offset-2">
+                  {tList("recentTtfbSummary", {
+                    latency: formatLatency(statistics.recentAvgTtfbMs),
+                    samples: statistics.recentTtfbSamples ?? 0,
+                  })}
+                </span>
+              </TooltipTrigger>
+              <TooltipContent side="top" className="max-w-xs p-3">
+                <RecentTtfbTooltipBody statistics={statistics} tList={tList} />
+              </TooltipContent>
+            </Tooltip>
           ) : (
             <span className="text-muted-foreground">{tList("recentTtfbNoData")}</span>
           )}
@@ -1153,8 +1221,8 @@ function ProviderRichListItemInner({
               )}
             </div>
           </TooltipTrigger>
-          <TooltipContent side="top" className="max-w-xs text-xs">
-            {tList("recentTtfbDescription")}
+          <TooltipContent side="top" className="max-w-xs p-3">
+            <RecentTtfbTooltipBody statistics={statistics} tList={tList} />
           </TooltipContent>
         </Tooltip>
 

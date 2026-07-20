@@ -454,6 +454,23 @@ export async function getProviderStatisticsAsync(): Promise<ProviderStatisticsMa
         }
       }
 
+      const sampleDetails = Array.isArray(s.recent_ttfb_sample_details)
+        ? s.recent_ttfb_sample_details
+            .map((item) => {
+              const ttfbMs = Number(item?.ttfbMs);
+              const atRaw: unknown = item?.at;
+              let at: string | null = null;
+              if (typeof atRaw === "string") {
+                at = atRaw;
+              } else if (atRaw instanceof Date) {
+                at = atRaw.toISOString();
+              }
+              if (!Number.isFinite(ttfbMs) || !at) return null;
+              return { ttfbMs, at };
+            })
+            .filter((item): item is { ttfbMs: number; at: string } => item !== null)
+        : [];
+
       result[s.id] = {
         todayCost: s.today_cost,
         todayCalls: s.today_calls,
@@ -462,6 +479,15 @@ export async function getProviderStatisticsAsync(): Promise<ProviderStatisticsMa
         recentAvgTtfbMs:
           s.recent_avg_ttfb_ms == null ? null : Number(s.recent_avg_ttfb_ms),
         recentTtfbSamples: s.recent_ttfb_samples ?? 0,
+        recentMinTtfbMs:
+          s.recent_min_ttfb_ms == null ? null : Number(s.recent_min_ttfb_ms),
+        recentMaxTtfbMs:
+          s.recent_max_ttfb_ms == null ? null : Number(s.recent_max_ttfb_ms),
+        recentP50TtfbMs:
+          s.recent_p50_ttfb_ms == null ? null : Number(s.recent_p50_ttfb_ms),
+        recentP95TtfbMs:
+          s.recent_p95_ttfb_ms == null ? null : Number(s.recent_p95_ttfb_ms),
+        recentTtfbSampleDetails: sampleDetails,
       };
     }
 

@@ -160,6 +160,11 @@ describe("Warmup 请求：不计入任何聚合统计", () => {
         last_call_model: null,
         recent_avg_ttfb_ms: null,
         recent_ttfb_samples: 0,
+        recent_min_ttfb_ms: null,
+        recent_max_ttfb_ms: null,
+        recent_p50_ttfb_ms: null,
+        recent_p95_ttfb_ms: null,
+        recent_ttfb_sample_details: null,
       },
     ]);
 

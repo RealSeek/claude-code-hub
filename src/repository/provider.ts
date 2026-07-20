@@ -1966,6 +1966,11 @@ export type ProviderStatisticsRow = {
   last_call_model: string | null;
   recent_avg_ttfb_ms: number | null;
   recent_ttfb_samples: number;
+  recent_min_ttfb_ms: number | null;
+  recent_max_ttfb_ms: number | null;
+  recent_p50_ttfb_ms: number | null;
+  recent_p95_ttfb_ms: number | null;
+  recent_ttfb_sample_details: Array<{ ttfbMs: number; at: string }> | null;
 };
 
 // 轻量内存缓存：降低后台轮询/重复加载导致的重复扫描
@@ -2036,6 +2041,10 @@ export async function getProviderStatistics(): Promise<ProviderStatisticsRow[]> 
           SELECT
             final_provider_id,
             AVG(ttfb_ms)::double precision AS recent_avg_ttfb_ms,
+            MIN(ttfb_ms)::double precision AS recent_min_ttfb_ms,
+            MAX(ttfb_ms)::double precision AS recent_max_ttfb_ms,
+            PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY ttfb_ms)::double precision AS recent_p50_ttfb_ms,
+            PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY ttfb_ms)::double precision AS recent_p95_ttfb_ms,
             COUNT(*)::integer AS recent_ttfb_samples
           FROM usage_ledger
           WHERE blocked_by IS NULL
@@ -2043,6 +2052,36 @@ export async function getProviderStatistics(): Promise<ProviderStatisticsRow[]> 
             AND ttfb_ms IS NOT NULL
             AND ttfb_ms >= 0
             AND created_at >= (SELECT recent_ttfb_start FROM bounds)
+          GROUP BY final_provider_id
+        ),
+        recent_ttfb_ranked AS (
+          SELECT
+            final_provider_id,
+            ttfb_ms,
+            created_at,
+            ROW_NUMBER() OVER (
+              PARTITION BY final_provider_id
+              ORDER BY created_at DESC, id DESC
+            ) AS rn
+          FROM usage_ledger
+          WHERE blocked_by IS NULL
+            AND is_success = TRUE
+            AND ttfb_ms IS NOT NULL
+            AND ttfb_ms >= 0
+            AND created_at >= (SELECT recent_ttfb_start FROM bounds)
+        ),
+        recent_ttfb_details AS (
+          SELECT
+            final_provider_id,
+            json_agg(
+              json_build_object(
+                'ttfbMs', ttfb_ms,
+                'at', created_at
+              )
+              ORDER BY created_at DESC, rn ASC
+            ) AS recent_ttfb_sample_details
+          FROM recent_ttfb_ranked
+          WHERE rn <= 20
           GROUP BY final_provider_id
         )
         SELECT
@@ -2052,11 +2091,17 @@ export async function getProviderStatistics(): Promise<ProviderStatisticsRow[]> 
           lc.last_call_time,
           lc.last_call_model,
           rp.recent_avg_ttfb_ms,
-          COALESCE(rp.recent_ttfb_samples, 0) AS recent_ttfb_samples
+          COALESCE(rp.recent_ttfb_samples, 0) AS recent_ttfb_samples,
+          rp.recent_min_ttfb_ms,
+          rp.recent_max_ttfb_ms,
+          rp.recent_p50_ttfb_ms,
+          rp.recent_p95_ttfb_ms,
+          rtd.recent_ttfb_sample_details
         FROM providers p
         LEFT JOIN provider_stats ps ON p.id = ps.final_provider_id
         LEFT JOIN latest_call lc ON p.id = lc.final_provider_id
         LEFT JOIN recent_performance rp ON p.id = rp.final_provider_id
+        LEFT JOIN recent_ttfb_details rtd ON p.id = rtd.final_provider_id
         WHERE p.deleted_at IS NULL
         ORDER BY p.id ASC
       `;
