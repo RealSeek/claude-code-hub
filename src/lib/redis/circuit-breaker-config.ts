@@ -17,6 +17,13 @@ export interface CircuitBreakerConfig {
   failureThreshold: number;
   openDuration: number; // 毫秒
   halfOpenSuccessThreshold: number;
+  rollingWindowDuration?: number;
+  minimumSamples?: number;
+  failureRateThreshold?: number;
+  consecutiveFailureThreshold?: number;
+  halfOpenMaxConcurrency?: number;
+  halfOpenLeaseDuration?: number;
+  baseOpenDuration?: number; // 指数退避初始开路时长（毫秒）
 }
 
 // 默认配置（向后兼容）
@@ -24,6 +31,13 @@ export const DEFAULT_CIRCUIT_BREAKER_CONFIG: CircuitBreakerConfig = {
   failureThreshold: 5,
   openDuration: 1800000, // 30 分钟
   halfOpenSuccessThreshold: 2,
+  rollingWindowDuration: 60000,
+  minimumSamples: 20,
+  failureRateThreshold: 0.4,
+  consecutiveFailureThreshold: 8,
+  halfOpenMaxConcurrency: 2,
+  halfOpenLeaseDuration: 120000,
+  baseOpenDuration: 60000, // 60 秒
 };
 
 /**
@@ -55,6 +69,13 @@ export async function loadProviderCircuitConfig(providerId: number): Promise<Cir
           failureThreshold: parseInt(cached.failureThreshold || "5", 10),
           openDuration: parseInt(cached.openDuration || "1800000", 10),
           halfOpenSuccessThreshold: parseInt(cached.halfOpenSuccessThreshold || "2", 10),
+          rollingWindowDuration: parseInt(cached.rollingWindowDuration || "60000", 10),
+          minimumSamples: parseInt(cached.minimumSamples || "20", 10),
+          failureRateThreshold: Number(cached.failureRateThreshold || "0.4"),
+          consecutiveFailureThreshold: parseInt(cached.consecutiveFailureThreshold || "8", 10),
+          halfOpenMaxConcurrency: parseInt(cached.halfOpenMaxConcurrency || "2", 10),
+          halfOpenLeaseDuration: parseInt(cached.halfOpenLeaseDuration || "120000", 10),
+          baseOpenDuration: parseInt(cached.baseOpenDuration || "60000", 10),
         };
       }
     }
@@ -74,6 +95,13 @@ export async function loadProviderCircuitConfig(providerId: number): Promise<Cir
       failureThreshold: provider.circuitBreakerFailureThreshold,
       openDuration: provider.circuitBreakerOpenDuration,
       halfOpenSuccessThreshold: provider.circuitBreakerHalfOpenSuccessThreshold,
+      rollingWindowDuration: provider.circuitBreakerRollingWindowDuration ?? 60000,
+      minimumSamples: provider.circuitBreakerMinimumSamples ?? 20,
+      failureRateThreshold: provider.circuitBreakerFailureRateThreshold ?? 0.4,
+      consecutiveFailureThreshold: provider.circuitBreakerConsecutiveFailureThreshold ?? 8,
+      halfOpenMaxConcurrency: provider.circuitBreakerHalfOpenMaxConcurrency ?? 2,
+      halfOpenLeaseDuration: provider.circuitBreakerHalfOpenLeaseDuration ?? 120000,
+      baseOpenDuration: provider.circuitBreakerBaseOpenDuration ?? 60000,
     };
 
     // 保存到 Redis（异步，不阻塞）
@@ -119,6 +147,13 @@ export async function saveProviderCircuitConfig(
       failureThreshold: config.failureThreshold.toString(),
       openDuration: config.openDuration.toString(),
       halfOpenSuccessThreshold: config.halfOpenSuccessThreshold.toString(),
+      rollingWindowDuration: (config.rollingWindowDuration ?? 60000).toString(),
+      minimumSamples: (config.minimumSamples ?? 20).toString(),
+      failureRateThreshold: (config.failureRateThreshold ?? 0.4).toString(),
+      consecutiveFailureThreshold: (config.consecutiveFailureThreshold ?? 8).toString(),
+      halfOpenMaxConcurrency: (config.halfOpenMaxConcurrency ?? 2).toString(),
+      halfOpenLeaseDuration: (config.halfOpenLeaseDuration ?? 120000).toString(),
+      baseOpenDuration: (config.baseOpenDuration ?? 60000).toString(),
     });
 
     // 设置 TTL：永久或 24 小时（根据需求调整）
@@ -183,7 +218,14 @@ export async function loadAllProvidersCircuitConfig(): Promise<void> {
       const config: CircuitBreakerConfig = {
         failureThreshold: provider.circuitBreakerFailureThreshold,
         openDuration: provider.circuitBreakerOpenDuration,
-        halfOpenSuccessThreshold: provider.circuitBreakerHalfOpenSuccessThreshold,
+          halfOpenSuccessThreshold: provider.circuitBreakerHalfOpenSuccessThreshold,
+          rollingWindowDuration: provider.circuitBreakerRollingWindowDuration ?? 60000,
+          minimumSamples: provider.circuitBreakerMinimumSamples ?? 20,
+          failureRateThreshold: provider.circuitBreakerFailureRateThreshold ?? 0.4,
+          consecutiveFailureThreshold: provider.circuitBreakerConsecutiveFailureThreshold ?? 8,
+          halfOpenMaxConcurrency: provider.circuitBreakerHalfOpenMaxConcurrency ?? 2,
+          halfOpenLeaseDuration: provider.circuitBreakerHalfOpenLeaseDuration ?? 120000,
+          baseOpenDuration: provider.circuitBreakerBaseOpenDuration ?? 60000,
       };
       return saveProviderCircuitConfig(provider.id, config);
     });

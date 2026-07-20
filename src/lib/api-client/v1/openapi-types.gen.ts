@@ -4611,6 +4611,10 @@ export interface operations {
                                 lastCallTime: string | null;
                                 /** @description Last call model name. */
                                 lastCallModel: string | null;
+                                /** @description Average successful request time to first byte in the last 5 minutes. */
+                                recentAvgTtfbMs: number | null;
+                                /** @description Successful TTFB sample count in the last 5 minutes. */
+                                recentTtfbSamples: number;
                             };
                             /** @description Provider creation date string. */
                             createdAt: string;
@@ -5137,6 +5141,10 @@ export interface operations {
                             lastCallTime: string | null;
                             /** @description Last call model name. */
                             lastCallModel: string | null;
+                            /** @description Average successful request time to first byte in the last 5 minutes. */
+                            recentAvgTtfbMs: number | null;
+                            /** @description Successful TTFB sample count in the last 5 minutes. */
+                            recentTtfbSamples: number;
                         };
                         /** @description Provider creation date string. */
                         createdAt: string;
@@ -5485,6 +5493,10 @@ export interface operations {
                             lastCallTime: string | null;
                             /** @description Last call model name. */
                             lastCallModel: string | null;
+                            /** @description Average successful request time to first byte in the last 5 minutes. */
+                            recentAvgTtfbMs: number | null;
+                            /** @description Successful TTFB sample count in the last 5 minutes. */
+                            recentTtfbSamples: number;
                         };
                         /** @description Provider creation date string. */
                         createdAt: string;
@@ -6184,6 +6196,10 @@ export interface operations {
                             lastCallTime: string | null;
                             /** @description Last call model name. */
                             lastCallModel: string | null;
+                            /** @description Average successful request time to first byte in the last 5 minutes. */
+                            recentAvgTtfbMs: number | null;
+                            /** @description Successful TTFB sample count in the last 5 minutes. */
+                            recentTtfbSamples: number;
                         };
                         /** @description Provider creation date string. */
                         createdAt: string;

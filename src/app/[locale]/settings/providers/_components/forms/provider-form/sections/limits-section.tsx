@@ -514,6 +514,60 @@ export function LimitsSection({ subSectionRefs }: LimitsSectionProps) {
               </SmartInputWrapper>
 
               <SmartInputWrapper
+                label={t("sections.circuitBreaker.rollingWindow.label")}
+                description={t("sections.circuitBreaker.rollingWindow.desc")}
+              >
+                <Input type="number" value={state.circuitBreaker.rollingWindowSeconds ?? ""}
+                  onChange={(e) => dispatch({ type: "SET_ROLLING_WINDOW_SECONDS", payload: e.target.value === "" ? undefined : parseInt(e.target.value, 10) })}
+                  placeholder="60" disabled={state.ui.isPending} min="1" max="3600" step="1" />
+              </SmartInputWrapper>
+
+              <SmartInputWrapper
+                label={t("sections.circuitBreaker.minimumSamples.label")}
+                description={t("sections.circuitBreaker.minimumSamples.desc")}
+              >
+                <Input type="number" value={state.circuitBreaker.minimumSamples ?? ""}
+                  onChange={(e) => dispatch({ type: "SET_MINIMUM_SAMPLES", payload: e.target.value === "" ? undefined : parseInt(e.target.value, 10) })}
+                  placeholder="20" disabled={state.ui.isPending} min="1" max="100000" step="1" />
+              </SmartInputWrapper>
+
+              <SmartInputWrapper
+                label={t("sections.circuitBreaker.failureRate.label")}
+                description={t("sections.circuitBreaker.failureRate.desc")}
+              >
+                <Input type="number" value={state.circuitBreaker.failureRatePercent ?? ""}
+                  onChange={(e) => dispatch({ type: "SET_FAILURE_RATE_PERCENT", payload: e.target.value === "" ? undefined : parseFloat(e.target.value) })}
+                  placeholder="40" disabled={state.ui.isPending} min="0" max="100" step="1" />
+              </SmartInputWrapper>
+
+              <SmartInputWrapper
+                label={t("sections.circuitBreaker.consecutiveFailure.label")}
+                description={t("sections.circuitBreaker.consecutiveFailure.desc")}
+              >
+                <Input type="number" value={state.circuitBreaker.consecutiveFailureThreshold ?? ""}
+                  onChange={(e) => dispatch({ type: "SET_CONSECUTIVE_FAILURE_THRESHOLD", payload: e.target.value === "" ? undefined : parseInt(e.target.value, 10) })}
+                  placeholder="8" disabled={state.ui.isPending} min="1" max="100000" step="1" />
+              </SmartInputWrapper>
+
+              <SmartInputWrapper
+                label={t("sections.circuitBreaker.halfOpenConcurrency.label")}
+                description={t("sections.circuitBreaker.halfOpenConcurrency.desc")}
+              >
+                <Input type="number" value={state.circuitBreaker.halfOpenMaxConcurrency ?? ""}
+                  onChange={(e) => dispatch({ type: "SET_HALF_OPEN_MAX_CONCURRENCY", payload: e.target.value === "" ? undefined : parseInt(e.target.value, 10) })}
+                  placeholder="2" disabled={state.ui.isPending} min="1" max="1000" step="1" />
+              </SmartInputWrapper>
+
+              <SmartInputWrapper
+                label={t("sections.circuitBreaker.halfOpenLease.label")}
+                description={t("sections.circuitBreaker.halfOpenLease.desc")}
+              >
+                <Input type="number" value={state.circuitBreaker.halfOpenLeaseSeconds ?? ""}
+                  onChange={(e) => dispatch({ type: "SET_HALF_OPEN_LEASE_SECONDS", payload: e.target.value === "" ? undefined : parseInt(e.target.value, 10) })}
+                  placeholder="120" disabled={state.ui.isPending} min="1" max="3600" step="1" />
+              </SmartInputWrapper>
+
+              <SmartInputWrapper
                 label={t("sections.circuitBreaker.maxRetryAttempts.label")}
                 description={t("sections.circuitBreaker.maxRetryAttempts.desc")}
               >

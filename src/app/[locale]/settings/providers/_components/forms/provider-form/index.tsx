@@ -433,6 +433,23 @@ function ProviderFormContent({
           circuit_breaker_open_duration: openDurationMs,
           circuit_breaker_half_open_success_threshold:
             state.circuitBreaker.halfOpenSuccessThreshold,
+          circuit_breaker_rolling_window_duration:
+            state.circuitBreaker.rollingWindowSeconds == null
+              ? undefined
+              : state.circuitBreaker.rollingWindowSeconds * 1000,
+          circuit_breaker_minimum_samples: state.circuitBreaker.minimumSamples,
+          circuit_breaker_failure_rate_threshold:
+            state.circuitBreaker.failureRatePercent == null
+              ? undefined
+              : state.circuitBreaker.failureRatePercent / 100,
+          circuit_breaker_consecutive_failure_threshold:
+            state.circuitBreaker.consecutiveFailureThreshold,
+          circuit_breaker_half_open_max_concurrency:
+            state.circuitBreaker.halfOpenMaxConcurrency,
+          circuit_breaker_half_open_lease_duration:
+            state.circuitBreaker.halfOpenLeaseSeconds == null
+              ? undefined
+              : state.circuitBreaker.halfOpenLeaseSeconds * 1000,
           max_retry_attempts: state.circuitBreaker.maxRetryAttempts,
           proxy_url: state.network.proxyUrl?.trim() || null,
           proxy_fallback_to_direct: state.network.proxyFallbackToDirect,

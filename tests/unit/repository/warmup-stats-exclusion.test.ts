@@ -177,6 +177,8 @@ describe("Warmup 请求：不计入任何聚合统计", () => {
         today_calls: 0,
         last_call_time: null,
         last_call_model: null,
+        recent_avg_ttfb_ms: null,
+        recent_ttfb_samples: 0,
       },
     ]);
 

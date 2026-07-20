@@ -24,22 +24,23 @@ export interface ProviderCircuitPolicy {
 export function resolveProviderCircuitPolicy(config: CircuitBreakerConfig): ProviderCircuitPolicy {
   const enabled = Number.isFinite(config.failureThreshold) && config.failureThreshold > 0;
   const consecutiveFailureThreshold = Math.max(
-    PROVIDER_CIRCUIT_MIN_CONSECUTIVE_FAILURES,
-    Math.trunc(config.failureThreshold)
+    1,
+    Math.trunc(config.consecutiveFailureThreshold ?? Math.max(PROVIDER_CIRCUIT_MIN_CONSECUTIVE_FAILURES, config.failureThreshold))
   );
   const maxOpenDurationMs = Math.max(1_000, Math.trunc(config.openDuration));
+  const baseOpenDurationMs = Math.max(1_000, Math.trunc(config.baseOpenDuration ?? PROVIDER_CIRCUIT_BASE_OPEN_MS));
 
   return {
     enabled,
-    windowMs: PROVIDER_CIRCUIT_WINDOW_MS,
-    minimumSamples: Math.max(PROVIDER_CIRCUIT_MIN_SAMPLES, consecutiveFailureThreshold * 2),
-    failureRateThreshold: PROVIDER_CIRCUIT_FAILURE_RATE,
+    windowMs: Math.max(1_000, Math.trunc(config.rollingWindowDuration ?? PROVIDER_CIRCUIT_WINDOW_MS)),
+    minimumSamples: Math.max(1, Math.trunc(config.minimumSamples ?? PROVIDER_CIRCUIT_MIN_SAMPLES)),
+    failureRateThreshold: Math.min(1, Math.max(0, config.failureRateThreshold ?? PROVIDER_CIRCUIT_FAILURE_RATE)),
     consecutiveFailureThreshold,
-    baseOpenDurationMs: Math.min(PROVIDER_CIRCUIT_BASE_OPEN_MS, maxOpenDurationMs),
+    baseOpenDurationMs: Math.min(baseOpenDurationMs, maxOpenDurationMs),
     maxOpenDurationMs,
     halfOpenSuccessThreshold: Math.max(1, Math.trunc(config.halfOpenSuccessThreshold)),
-    halfOpenMaxConcurrency: PROVIDER_CIRCUIT_HALF_OPEN_MAX_CONCURRENCY,
-    halfOpenLeaseMs: PROVIDER_CIRCUIT_HALF_OPEN_LEASE_MS,
+    halfOpenMaxConcurrency: Math.max(1, Math.trunc(config.halfOpenMaxConcurrency ?? PROVIDER_CIRCUIT_HALF_OPEN_MAX_CONCURRENCY)),
+    halfOpenLeaseMs: Math.max(1_000, Math.trunc(config.halfOpenLeaseDuration ?? PROVIDER_CIRCUIT_HALF_OPEN_LEASE_MS)),
   };
 }
 

@@ -109,6 +109,12 @@ export const ProviderSummarySchema = z
       .int()
       .nullable()
       .describe("Circuit breaker half-open success threshold."),
+    circuitBreakerRollingWindowDuration: z.number().int().nullable(),
+    circuitBreakerMinimumSamples: z.number().int().nullable(),
+    circuitBreakerFailureRateThreshold: z.number().nullable(),
+    circuitBreakerConsecutiveFailureThreshold: z.number().int().nullable(),
+    circuitBreakerHalfOpenMaxConcurrency: z.number().int().nullable(),
+    circuitBreakerHalfOpenLeaseDuration: z.number().int().nullable(),
     proxyUrl: NullableStringSchema.describe(
       "Optional outbound proxy URL with credentials redacted."
     ),
@@ -191,6 +197,14 @@ export const ProviderSummarySchema = z
         todayCalls: z.number().int().describe("Today's call count."),
         lastCallTime: NullableStringSchema.describe("Last call timestamp."),
         lastCallModel: NullableStringSchema.describe("Last call model name."),
+        recentAvgTtfbMs: z
+          .number()
+          .nullable()
+          .describe("Average successful request time to first byte in the last 5 minutes."),
+        recentTtfbSamples: z
+          .number()
+          .int()
+          .describe("Successful TTFB sample count in the last 5 minutes."),
       })
       .optional()
       .describe("Today statistics. Present only when include=statistics is requested."),
@@ -671,6 +685,12 @@ export const ProviderCreateSchema = z
       .max(10)
       .optional()
       .describe("Circuit breaker half-open success threshold."),
+    circuit_breaker_rolling_window_duration: z.number().int().min(1000).max(3_600_000).optional(),
+    circuit_breaker_minimum_samples: z.number().int().min(1).max(100_000).optional(),
+    circuit_breaker_failure_rate_threshold: z.number().min(0).max(1).optional(),
+    circuit_breaker_consecutive_failure_threshold: z.number().int().min(1).max(100_000).optional(),
+    circuit_breaker_half_open_max_concurrency: z.number().int().min(1).max(1000).optional(),
+    circuit_breaker_half_open_lease_duration: z.number().int().min(1000).max(3_600_000).optional(),
     proxy_url: z.string().max(512).nullable().optional().describe("Optional outbound proxy URL."),
     proxy_fallback_to_direct: z
       .boolean()

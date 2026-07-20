@@ -7,6 +7,7 @@ import {
   Clock,
   Copy,
   Edit,
+  Gauge,
   Globe,
   Key,
   MoreHorizontal,
@@ -87,6 +88,12 @@ import { invalidateProviderQueries } from "./invalidate-provider-queries";
 import { PriorityEditPopover } from "./priority-edit-popover";
 import { ProviderEndpointHover } from "./provider-endpoint-hover";
 import { ProviderFormDialogContent } from "./provider-form-dialog-content";
+
+function formatLatency(ms: number | null | undefined): string {
+  if (ms === null || ms === undefined || !Number.isFinite(ms)) return "-";
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
+}
 
 interface ProviderRichListItemProps {
   provider: ProviderDisplay;
@@ -700,6 +707,25 @@ function ProviderRichListItemInner({
           </div>
         </div>
 
+        <div className="flex items-center gap-2 text-xs md:hidden">
+          <Gauge className="h-3.5 w-3.5 text-muted-foreground" />
+          <span className="text-muted-foreground">{tList("recentTtfbLabel")}:</span>
+          {statisticsLoading ? (
+            <Skeleton className="h-4 w-20" />
+          ) : statistics?.recentAvgTtfbMs !== null &&
+            statistics?.recentAvgTtfbMs !== undefined &&
+            (statistics.recentTtfbSamples ?? 0) > 0 ? (
+            <span className="font-medium tabular-nums">
+              {tList("recentTtfbSummary", {
+                latency: formatLatency(statistics.recentAvgTtfbMs),
+                samples: statistics.recentTtfbSamples ?? 0,
+              })}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">{tList("recentTtfbNoData")}</span>
+          )}
+        </div>
+
         {provider.upstreamBillingType !== "official" &&
           (upstreamBillingLoading || upstreamBilling != null) && (
             <div className="flex items-center gap-2 text-xs md:hidden">
@@ -1100,6 +1126,41 @@ function ProviderRichListItemInner({
               )}
             </div>
           )}
+
+        {/* Desktop: recent provider performance */}
+        <Tooltip delayDuration={200}>
+          <TooltipTrigger asChild>
+            <div className="hidden min-w-[112px] flex-shrink-0 cursor-help rounded-md bg-muted/30 px-2.5 py-1.5 text-center xl:block">
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70">
+                {tList("recentTtfbLabel")}
+              </div>
+              {statisticsLoading ? (
+                <>
+                  <Skeleton className="mx-auto my-0.5 h-5 w-14" />
+                  <Skeleton className="mx-auto mt-0.5 h-4 w-10" />
+                </>
+              ) : statistics?.recentAvgTtfbMs !== null &&
+                statistics?.recentAvgTtfbMs !== undefined &&
+                (statistics.recentTtfbSamples ?? 0) > 0 ? (
+                <>
+                  <div className="text-sm font-semibold tabular-nums">
+                    {formatLatency(statistics.recentAvgTtfbMs)}
+                  </div>
+                  <div className="mt-0.5 text-xs text-muted-foreground tabular-nums">
+                    {tList("recentTtfbSamples", { count: statistics.recentTtfbSamples ?? 0 })}
+                  </div>
+                </>
+              ) : (
+                <div className="py-2 text-xs text-muted-foreground">
+                  {tList("recentTtfbNoData")}
+                </div>
+              )}
+            </div>
+          </TooltipTrigger>
+          <TooltipContent side="top" className="max-w-xs text-xs">
+            {tList("recentTtfbDescription")}
+          </TooltipContent>
+        </Tooltip>
 
         {/* Desktop: action buttons */}
         <div className="hidden md:flex items-center gap-1 flex-shrink-0">

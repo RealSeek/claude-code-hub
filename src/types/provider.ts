@@ -299,6 +299,12 @@ export interface ProviderBatchApplyUpdates {
   circuit_breaker_failure_threshold?: number;
   circuit_breaker_open_duration?: number;
   circuit_breaker_half_open_success_threshold?: number;
+  circuit_breaker_rolling_window_duration?: number;
+  circuit_breaker_minimum_samples?: number;
+  circuit_breaker_failure_rate_threshold?: number;
+  circuit_breaker_consecutive_failure_threshold?: number;
+  circuit_breaker_half_open_max_concurrency?: number;
+  circuit_breaker_half_open_lease_duration?: number;
   max_retry_attempts?: number | null;
   // Network
   proxy_url?: string | null;
@@ -424,6 +430,13 @@ export interface Provider {
   circuitBreakerFailureThreshold: number;
   circuitBreakerOpenDuration: number; // 毫秒
   circuitBreakerHalfOpenSuccessThreshold: number;
+  circuitBreakerRollingWindowDuration?: number;
+  circuitBreakerMinimumSamples?: number;
+  circuitBreakerFailureRateThreshold?: number;
+  circuitBreakerConsecutiveFailureThreshold?: number;
+  circuitBreakerHalfOpenMaxConcurrency?: number;
+  circuitBreakerHalfOpenLeaseDuration?: number;
+  circuitBreakerBaseOpenDuration?: number; // 指数退避初始开路时长（毫秒）
 
   // 代理配置（支持 HTTP/HTTPS/SOCKS5）
   proxyUrl: string | null;
@@ -538,6 +551,13 @@ export interface ProviderDisplay {
   circuitBreakerFailureThreshold: number;
   circuitBreakerOpenDuration: number; // 毫秒
   circuitBreakerHalfOpenSuccessThreshold: number;
+  circuitBreakerRollingWindowDuration?: number;
+  circuitBreakerMinimumSamples?: number;
+  circuitBreakerFailureRateThreshold?: number;
+  circuitBreakerConsecutiveFailureThreshold?: number;
+  circuitBreakerHalfOpenMaxConcurrency?: number;
+  circuitBreakerHalfOpenLeaseDuration?: number;
+  circuitBreakerBaseOpenDuration?: number; // 指数退避初始开路时长（毫秒）
   // 代理配置
   proxyUrl: string | null;
   proxyFallbackToDirect: boolean;
@@ -586,6 +606,8 @@ export interface ProviderStatistics {
   todayCalls: number;
   lastCallTime: string | null;
   lastCallModel: string | null;
+  recentAvgTtfbMs?: number | null;
+  recentTtfbSamples?: number;
 }
 
 /**
@@ -703,6 +725,12 @@ export interface CreateProviderData {
   circuit_breaker_failure_threshold?: number;
   circuit_breaker_open_duration?: number; // 毫秒
   circuit_breaker_half_open_success_threshold?: number;
+  circuit_breaker_rolling_window_duration?: number;
+  circuit_breaker_minimum_samples?: number;
+  circuit_breaker_failure_rate_threshold?: number;
+  circuit_breaker_consecutive_failure_threshold?: number;
+  circuit_breaker_half_open_max_concurrency?: number;
+  circuit_breaker_half_open_lease_duration?: number;
 
   // 代理配置（支持 HTTP/HTTPS/SOCKS5）
   proxy_url?: string | null;
@@ -802,6 +830,12 @@ export interface UpdateProviderData {
   circuit_breaker_failure_threshold?: number;
   circuit_breaker_open_duration?: number; // 毫秒
   circuit_breaker_half_open_success_threshold?: number;
+  circuit_breaker_rolling_window_duration?: number;
+  circuit_breaker_minimum_samples?: number;
+  circuit_breaker_failure_rate_threshold?: number;
+  circuit_breaker_consecutive_failure_threshold?: number;
+  circuit_breaker_half_open_max_concurrency?: number;
+  circuit_breaker_half_open_lease_duration?: number;
 
   // 代理配置（支持 HTTP/HTTPS/SOCKS5）
   proxy_url?: string | null;
