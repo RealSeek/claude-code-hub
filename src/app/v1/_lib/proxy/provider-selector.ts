@@ -54,6 +54,11 @@ export function isProviderWithinGroupBillingPolicy(
   return Number.isFinite(upstreamMultiplier) && upstreamMultiplier < policy.maxUpstreamMultiplier;
 }
 
+function shouldAcquireProviderCircuitPermit(session: ProxySession | undefined): boolean {
+  const policy = session?.getEndpointPolicy?.();
+  return policy?.allowCircuitBreakerAccounting ?? true;
+}
+
 async function resolveGroupBillingPolicy(
   session?: ProxySession
 ): Promise<GroupBillingPolicy | null> {
@@ -1220,6 +1225,18 @@ export class ProxyProviderResolver {
       return null;
     }
 
+    const admission = shouldAcquireProviderCircuitPermit(session)
+      ? await tryAcquireProviderCircuitPermit(provider.id)
+      : { allowed: true, permitToken: null };
+    if (!admission.allowed) {
+      logger.debug("ProviderSelector: Session provider half-open capacity exhausted", {
+        sessionId: session.sessionId,
+        providerId: provider.id,
+      });
+      return null;
+    }
+    session.recordProviderCircuitPermit?.(provider.id, admission.permitToken);
+
     logger.info("ProviderSelector: Reusing provider", {
       providerName: provider.name,
       providerId: provider.id,
@@ -1630,12 +1647,38 @@ export class ProxyProviderResolver {
       probability: totalWeight > 0 ? (schedulingWeights.get(p.id) ?? 0) / totalWeight : 0,
     }));
 
-    const selected = await selectProviderApiKey(
-      ProxyProviderResolver.selectOptimal(
-        topPriorityProviders,
+    let admissionCandidates = [...topPriorityProviders];
+    let admittedProvider: Provider | null = null;
+    while (admissionCandidates.length > 0) {
+      const candidate = ProxyProviderResolver.selectOptimal(
+        admissionCandidates,
         effectiveGroupPick,
         schedulingWeights
-      ),
+      );
+      const admission = session && shouldAcquireProviderCircuitPermit(session)
+        ? await tryAcquireProviderCircuitPermit(candidate.id)
+        : { allowed: true, permitToken: null };
+      if (admission.allowed) {
+        session?.recordProviderCircuitPermit?.(candidate.id, admission.permitToken);
+        admittedProvider = candidate;
+        break;
+      }
+      context.filteredProviders?.push({
+        id: candidate.id,
+        name: candidate.name,
+        reason: "circuit_open",
+        details: "circuit_half_open_capacity",
+      });
+      admissionCandidates = admissionCandidates.filter((provider) => provider.id !== candidate.id);
+    }
+
+    if (!admittedProvider) {
+      logger.warn("ProviderSelector: All half-open provider permits are in use");
+      return { provider: null, context };
+    }
+
+    const selected = await selectProviderApiKey(
+      admittedProvider,
       new Set(),
       dispatchNow,
       { allowCooldownFallback: readyKeyProviders.length === 0 }

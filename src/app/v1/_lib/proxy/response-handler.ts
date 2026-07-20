@@ -2406,6 +2406,7 @@ function finalizeDeferredStreamingFinalizationIfNeeded(
     }
   };
 
+  await releaseUnsettledPermits();
   return {
     effectiveStatusCode,
     errorMessage,
@@ -2606,6 +2607,14 @@ export class ProxyResponseHandler {
                 statusCode: statusCode,
                 errorMessage: errorMessageForFinalize,
               });
+            } else if (session.getEndpointPolicy().allowCircuitBreakerAccounting) {
+              const { recordSuccess } = await import("@/lib/circuit-breaker");
+              await recordSuccess(
+                provider.id,
+                session.ttfbMs,
+                session.startTime,
+                session.consumeProviderCircuitPermit?.(provider.id)
+              );
             }
 
             // 使用共享的统计处理方法
@@ -3269,6 +3278,14 @@ export class ProxyResponseHandler {
             statusCode: statusCode,
             errorMessage: errorMessageForDb,
           });
+        } else if (session.getEndpointPolicy().allowCircuitBreakerAccounting) {
+          const { recordSuccess } = await import("@/lib/circuit-breaker");
+          await recordSuccess(
+            provider.id,
+            session.ttfbMs,
+            session.startTime,
+            session.consumeProviderCircuitPermit?.(provider.id)
+          );
         }
 
         let postTerminalSideEffectsScheduled = false;

@@ -10,7 +10,6 @@ import {
   getCircuitState,
   getProviderHealthInfo,
   recordFailure,
-  recordSuccess,
 } from "@/lib/circuit-breaker";
 import {
   hasUsableClaudeMetadataUserId,
@@ -212,12 +211,17 @@ function resolveEndpointFailureCooldownUntil(error: Error): number | undefined {
 }
 
 function buildProviderFailureContext(
+  session: ProxySession,
   error: Error,
   provider?: Provider,
   providerKeyFailureAlreadyRecorded = false
 ) {
+  const runtimeContext = {
+    requestStartedAt: session.startTime,
+    circuitPermitToken: provider ? session.consumeProviderCircuitPermit?.(provider.id) : null,
+  };
   if (!(error instanceof ProxyError)) {
-    return provider ? { provider } : undefined;
+    return provider ? { provider, ...runtimeContext } : runtimeContext;
   }
   return {
     statusCode: error.statusCode,
@@ -226,6 +230,7 @@ function buildProviderFailureContext(
     providerKeyId: provider?.selectedApiKeyId,
     provider,
     providerKeyFailureAlreadyRecorded,
+    ...runtimeContext,
   };
 }
 
@@ -2160,14 +2165,6 @@ export class ProxyForwarder {
           if (currentProvider.selectedApiKeyId != null) {
             recordProviderApiKeySuccess(currentProvider.selectedApiKeyId, session.startTime);
           }
-          if (shouldAccountCircuitBreaker) {
-            if (session.ttfbMs == null) {
-              recordSuccess(currentProvider.id);
-            } else {
-              recordSuccess(currentProvider.id, session.ttfbMs, session.startTime);
-            }
-          }
-
           // ⭐ 成功后绑定 session 到供应商（智能绑定策略）
           if (session.sessionId && session.isSessionBindingAllowed()) {
             // 使用智能绑定策略（故障转移优先 + 稳定性优化）
@@ -2591,7 +2588,7 @@ export class ProxyForwarder {
                 await recordFailure(
                   currentProvider.id,
                   lastError,
-                  buildProviderFailureContext(lastError, currentProvider)
+                  buildProviderFailureContext(session, lastError, currentProvider)
                 );
               }
             } else {
@@ -2751,7 +2748,7 @@ export class ProxyForwarder {
                   await recordFailure(
                     currentProvider.id,
                     lastError,
-                    buildProviderFailureContext(lastError, currentProvider)
+                    buildProviderFailureContext(session, lastError, currentProvider)
                   );
                 }
               }
@@ -2802,7 +2799,7 @@ export class ProxyForwarder {
                 await recordFailure(
                   currentProvider.id,
                   lastError,
-                  buildProviderFailureContext(lastError, currentProvider, true)
+                  buildProviderFailureContext(session, lastError, currentProvider, true)
                 );
               }
               ProxyForwarder.markProviderFailed(session, failedProviderIds, currentProvider.id);
@@ -2822,7 +2819,7 @@ export class ProxyForwarder {
                 await recordFailure(
                   currentProvider.id,
                   lastError,
-                  buildProviderFailureContext(lastError, currentProvider)
+                  buildProviderFailureContext(session, lastError, currentProvider)
                 );
               }
               ProxyForwarder.markProviderFailed(session, failedProviderIds, currentProvider.id);
@@ -2964,6 +2961,7 @@ export class ProxyForwarder {
                   currentProvider.id,
                   lastError,
                   buildProviderFailureContext(
+                    session,
                     lastError,
                     currentProvider,
                     providerKeyFailureAlreadyRecorded
@@ -5377,6 +5375,7 @@ export class ProxyForwarder {
           attempt.provider.id,
           error,
           buildProviderFailureContext(
+            session,
             error,
             attempt.provider,
             providerKeyFailureAlreadyRecorded

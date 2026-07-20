@@ -28,6 +28,11 @@ export interface CircuitBreakerState {
   circuitState: CircuitState;
   circuitOpenUntil: number | null;
   halfOpenSuccessCount: number;
+  windowRequestCount?: number;
+  windowFailureCount?: number;
+  windowFailureRate?: number;
+  openCount?: number;
+  halfOpenInFlight?: number;
 }
 
 // 默认状态（正常关闭）
@@ -59,6 +64,11 @@ function serializeState(state: CircuitBreakerState): Record<string, string> {
     circuitState: state.circuitState,
     circuitOpenUntil: state.circuitOpenUntil?.toString() ?? "",
     halfOpenSuccessCount: state.halfOpenSuccessCount.toString(),
+    windowRequestCount: (state.windowRequestCount ?? 0).toString(),
+    windowFailureCount: (state.windowFailureCount ?? 0).toString(),
+    windowFailureRate: (state.windowFailureRate ?? 0).toString(),
+    openCount: (state.openCount ?? 0).toString(),
+    halfOpenInFlight: (state.halfOpenInFlight ?? 0).toString(),
   };
 }
 
@@ -72,6 +82,11 @@ function deserializeState(data: Record<string, string>): CircuitBreakerState {
     circuitState: (data.circuitState as CircuitState) || "closed",
     circuitOpenUntil: data.circuitOpenUntil ? parseInt(data.circuitOpenUntil, 10) : null,
     halfOpenSuccessCount: parseInt(data.halfOpenSuccessCount || "0", 10),
+    windowRequestCount: parseInt(data.windowRequestCount || "0", 10),
+    windowFailureCount: parseInt(data.windowFailureCount || "0", 10),
+    windowFailureRate: parseFloat(data.windowFailureRate || "0"),
+    openCount: parseInt(data.openCount || "0", 10),
+    halfOpenInFlight: parseInt(data.halfOpenInFlight || "0", 10),
   };
 }
 

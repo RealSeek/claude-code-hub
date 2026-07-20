@@ -288,6 +288,9 @@ export class ProxySession {
   // second read that could race with another request's binding update.
   private sessionBindingSnapshot: SessionBindingSnapshot | null = null;
 
+  // Half-open circuit permits are request-scoped and settled with the final provider outcome.
+  private providerCircuitPermits = new Map<number, string>();
+
   private constructor(init: {
     startTime: number;
     method: string;
@@ -426,6 +429,12 @@ export class ProxySession {
   }
 
   setProvider(provider: Provider | null): void {
+    if (this.provider && this.provider.id !== provider?.id) {
+      const stalePermit = this.consumeProviderCircuitPermit(this.provider.id);
+      if (stalePermit) {
+        void releaseProviderCircuitPermit(this.provider.id, stalePermit);
+      }
+    }
     this.provider = provider;
     if (provider) {
       this.providerType = provider.providerType as ProviderType;

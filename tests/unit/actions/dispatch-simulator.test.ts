@@ -17,6 +17,7 @@ const authMocks = vi.hoisted(() => ({
 const circuitBreakerMocks = vi.hoisted(() => ({
   isCircuitOpen: vi.fn(async () => false),
   getCircuitState: vi.fn(() => "closed"),
+  tryAcquireProviderCircuitPermit: vi.fn(async () => ({ allowed: true, permitToken: null })),
 }));
 
 const vendorCircuitMocks = vi.hoisted(() => ({

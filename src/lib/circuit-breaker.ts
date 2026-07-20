@@ -17,6 +17,16 @@ import "server-only";
 
 import { logger } from "@/lib/logger";
 import {
+  calculateProviderCircuitOpenDuration,
+  isProviderCircuitEligibleFailure,
+  resolveProviderCircuitPolicy,
+} from "@/lib/provider-circuit-policy";
+import {
+  areAllProviderApiKeysCooled,
+  providerApiKeyCount,
+  recordProviderApiKeyFailure,
+} from "@/lib/provider-key-dispatch";
+import {
   type CircuitBreakerConfig,
   DEFAULT_CIRCUIT_BREAKER_CONFIG,
   loadProviderCircuitConfig,
@@ -27,12 +37,14 @@ import {
   loadCircuitState,
   saveCircuitState,
 } from "@/lib/redis/circuit-breaker-state";
-import { publishCacheInvalidation, subscribeCacheInvalidation } from "@/lib/redis/pubsub";
 import {
-  areAllProviderApiKeysCooled,
-  providerApiKeyCount,
-  recordProviderApiKeyFailure,
-} from "@/lib/provider-key-dispatch";
+  type AtomicProviderCircuitState,
+  acquireProviderCircuitPermit,
+  clearProviderCircuitRuntime,
+  recordProviderCircuitOutcome,
+  resetProviderCircuitRuntime,
+} from "@/lib/redis/provider-circuit-breaker-store";
+import { publishCacheInvalidation, subscribeCacheInvalidation } from "@/lib/redis/pubsub";
 import { recordSmartProviderFailure, recordSmartProviderSuccess } from "@/lib/smart-dispatch";
 import type { Provider } from "@/types/provider";
 
@@ -43,6 +55,11 @@ export interface ProviderHealth {
   circuitState: "closed" | "open" | "half-open";
   circuitOpenUntil: number | null;
   halfOpenSuccessCount: number;
+  windowRequestCount?: number;
+  windowFailureCount?: number;
+  windowFailureRate?: number;
+  openCount?: number;
+  halfOpenInFlight?: number;
   // 缓存的配置（减少 Redis 查询）
   config: CircuitBreakerConfig | null;
   configLoadedAt: number | null; // 配置加载时间戳
@@ -221,6 +238,24 @@ function resetHealthToClosed(health: ProviderHealth): void {
   health.lastFailureTime = null;
   health.circuitOpenUntil = null;
   health.halfOpenSuccessCount = 0;
+  health.windowRequestCount = 0;
+  health.windowFailureCount = 0;
+  health.windowFailureRate = 0;
+  health.openCount = 0;
+  health.halfOpenInFlight = 0;
+}
+
+function applyAtomicState(health: ProviderHealth, state: AtomicProviderCircuitState): void {
+  health.failureCount = state.failureCount;
+  health.lastFailureTime = state.lastFailureTime;
+  health.circuitState = state.circuitState;
+  health.circuitOpenUntil = state.circuitOpenUntil;
+  health.halfOpenSuccessCount = state.halfOpenSuccessCount;
+  health.windowRequestCount = state.windowRequestCount;
+  health.windowFailureCount = state.windowFailureCount;
+  health.windowFailureRate = state.windowFailureRate;
+  health.openCount = state.openCount;
+  health.halfOpenInFlight = state.halfOpenInFlight;
 }
 
 function isCircuitStateOpen(health: ProviderHealth): boolean {
@@ -451,8 +486,34 @@ export async function getProviderHealthInfo(providerId: number): Promise<{
 /**
  * 检查熔断器是否打开（不允许请求）
  */
-export async function isCircuitOpen(providerId: number): Promise<boolean> {
+export async function isCircuitOpen(
+  providerId: number,
+  options?: {
+    acquireHalfOpenPermit?: boolean;
+    onPermit?: (permitToken: string | null) => void;
+  }
+): Promise<boolean> {
   const health = await getOrCreateHealth(providerId);
+
+  if (options?.acquireHalfOpenPermit) {
+    const admissionConfig = await getProviderConfigForHealth(providerId, health);
+    if (handleDisabledCircuitBreaker(providerId, health, admissionConfig)) {
+      options.onPermit?.(null);
+      return false;
+    }
+    const atomic = await acquireProviderCircuitPermit(
+      providerId,
+      resolveProviderCircuitPolicy(admissionConfig)
+    );
+    if (atomic) {
+      if (atomic.state) {
+        health.circuitState = atomic.state.circuitState;
+        health.halfOpenInFlight = atomic.state.halfOpenInFlight;
+      }
+      if (atomic.allowed) options.onPermit?.(atomic.permitToken);
+      return !atomic.allowed;
+    }
+  }
 
   if (health.circuitState === "closed") {
     return false;
@@ -474,8 +535,6 @@ export async function isCircuitOpen(providerId: number): Promise<boolean> {
       health.circuitState = "half-open";
       health.halfOpenSuccessCount = 0;
       logger.info(`[CircuitBreaker] Provider ${providerId} transitioned to half-open`);
-      // 持久化状态变更到 Redis
-      persistStateToRedis(providerId, health);
       return false; // 允许尝试
     }
     return true; // 仍在打开状态
@@ -483,6 +542,31 @@ export async function isCircuitOpen(providerId: number): Promise<boolean> {
 
   // half-open 状态：允许尝试
   return false;
+}
+
+export async function tryAcquireProviderCircuitPermit(providerId: number): Promise<{
+  allowed: boolean;
+  permitToken: string | null;
+}> {
+  const health = await getOrCreateHealth(providerId);
+  const config = await getProviderConfigForHealth(providerId, health);
+  if (handleDisabledCircuitBreaker(providerId, health, config)) {
+    return { allowed: true, permitToken: null };
+  }
+
+  const atomic = await acquireProviderCircuitPermit(
+    providerId,
+    resolveProviderCircuitPolicy(config)
+  );
+  if (atomic) {
+    if (atomic.state) {
+      health.circuitState = atomic.state.circuitState;
+      health.halfOpenInFlight = atomic.state.halfOpenInFlight;
+    }
+    return { allowed: atomic.allowed, permitToken: atomic.permitToken };
+  }
+
+  return { allowed: !(await isCircuitOpen(providerId)), permitToken: null };
 }
 
 /**
@@ -495,6 +579,8 @@ export interface ProviderFailureContext {
   providerKeyId?: number | null;
   provider?: Provider;
   providerKeyFailureAlreadyRecorded?: boolean;
+  requestStartedAt?: number;
+  circuitPermitToken?: string | null;
 }
 
 export async function recordFailure(
@@ -504,6 +590,9 @@ export async function recordFailure(
 ): Promise<void> {
   let requestedCooldownUntil: number | undefined;
   let keyLevelFailure = false;
+  let classificationLevel: string | undefined;
+  let classifiedStatusCode: number | undefined;
+  let classifiedBody: string | null = null;
   try {
     const upstreamError = (
       error as Error & {
@@ -511,9 +600,11 @@ export async function recordFailure(
         upstreamError?: { body?: string; headers?: Record<string, string> };
       }
     ).upstreamError;
-    const statusCode = failureContext?.statusCode ??
-      (error as Error & { statusCode?: number }).statusCode;
+    const statusCode =
+      failureContext?.statusCode ?? (error as Error & { statusCode?: number }).statusCode;
     const body = failureContext?.body ?? upstreamError?.body ?? null;
+    classifiedStatusCode = statusCode;
+    classifiedBody = body;
     const headersInput = failureContext?.headers ?? upstreamError?.headers;
     if ((headersInput || body) && Number.isFinite(statusCode)) {
       const { classifyHTTPResponse, generateCooldownAdvice } = await import(
@@ -528,6 +619,7 @@ export async function recordFailure(
         }
       }
       const classification = classifyHTTPResponse(statusCode!, headers, body);
+      classificationLevel = classification.level;
       keyLevelFailure = classification.level === "key";
       const advice = generateCooldownAdvice(classification, {} as never);
       if (advice?.shouldCooldown) {
@@ -541,6 +633,23 @@ export async function recordFailure(
     // 分类失败时继续使用本地指数退避，不能影响原有熔断流程。
   }
 
+  const health = await getOrCreateHealth(providerId);
+  const config = await getProviderConfigForHealth(providerId, health);
+  const policy = resolveProviderCircuitPolicy(config);
+
+  if (handleDisabledCircuitBreaker(providerId, health, config)) {
+    if (failureContext?.circuitPermitToken) {
+      await recordProviderCircuitOutcome({
+        providerId,
+        outcome: "ignored",
+        policy,
+        requestStartedAt: failureContext.requestStartedAt ?? Date.now(),
+        permitToken: failureContext.circuitPermitToken,
+      });
+    }
+    return;
+  }
+
   if (
     keyLevelFailure &&
     failureContext?.providerKeyId != null &&
@@ -551,15 +660,91 @@ export async function recordFailure(
       recordProviderApiKeyFailure(failureContext.providerKeyId, requestedCooldownUntil);
     }
     if (!areAllProviderApiKeysCooled(failureContext.provider)) {
+      await recordProviderCircuitOutcome({
+        providerId,
+        outcome: "ignored",
+        policy,
+        requestStartedAt: failureContext.requestStartedAt ?? Date.now(),
+        permitToken: failureContext.circuitPermitToken,
+      });
       return;
     }
   }
+  if (
+    !isProviderCircuitEligibleFailure({
+      statusCode: classifiedStatusCode,
+      message: error.message,
+      body: classifiedBody,
+      classificationLevel,
+    })
+  ) {
+    // Standalone callers without key context still need the historical smart cooldown;
+    // proxy calls with a provider/key context handle key-level cooling separately.
+    if (classificationLevel === "key" && !failureContext?.provider) {
+      recordSmartProviderFailure(providerId, requestedCooldownUntil);
+    }
+    await recordProviderCircuitOutcome({
+      providerId,
+      outcome: "ignored",
+      policy,
+      requestStartedAt: failureContext?.requestStartedAt ?? Date.now(),
+      permitToken: failureContext?.circuitPermitToken,
+    });
+    logger.debug("[CircuitBreaker] Ignored client/request-level failure", {
+      providerId,
+      statusCode: classifiedStatusCode,
+      errorMessage: error.message,
+    });
+    return;
+  }
 
   recordSmartProviderFailure(providerId, requestedCooldownUntil);
-  const health = await getOrCreateHealth(providerId);
-  const config = await getProviderConfigForHealth(providerId, health);
 
-  if (handleDisabledCircuitBreaker(providerId, health, config)) {
+  const atomicState = await recordProviderCircuitOutcome({
+    providerId,
+    outcome: "failure",
+    policy,
+    requestStartedAt: failureContext?.requestStartedAt ?? Date.now(),
+    permitToken: failureContext?.circuitPermitToken,
+  });
+  if (atomicState) {
+    applyAtomicState(health, atomicState);
+    logger.warn(
+      `[CircuitBreaker] Provider ${providerId} failure recorded (${atomicState.failureCount}/${policy.consecutiveFailureThreshold})`,
+      {
+        providerId,
+        consecutiveFailures: atomicState.failureCount,
+        consecutiveThreshold: policy.consecutiveFailureThreshold,
+        windowRequests: atomicState.windowRequestCount,
+        windowFailures: atomicState.windowFailureCount,
+        windowFailureRate: atomicState.windowFailureRate,
+        errorMessage: error.message,
+      }
+    );
+    if (atomicState.opened && atomicState.circuitOpenUntil) {
+      const retryAt = new Date(atomicState.circuitOpenUntil).toISOString();
+      logger.error(`[CircuitBreaker] Provider ${providerId} circuit opened`, {
+        providerId,
+        consecutiveFailures: atomicState.failureCount,
+        windowRequests: atomicState.windowRequestCount,
+        windowFailures: atomicState.windowFailureCount,
+        windowFailureRate: atomicState.windowFailureRate,
+        openCount: atomicState.openCount,
+        retryAt,
+      });
+      triggerCircuitBreakerAlert(
+        providerId,
+        atomicState.failureCount,
+        retryAt,
+        error.message
+      ).catch((alertError) => {
+        logger.error({
+          action: "trigger_circuit_breaker_alert_error",
+          providerId,
+          error: alertError instanceof Error ? alertError.message : String(alertError),
+        });
+      });
+    }
     return;
   }
 
@@ -567,11 +752,11 @@ export async function recordFailure(
   health.lastFailureTime = Date.now();
 
   logger.warn(
-    `[CircuitBreaker] Provider ${providerId} failure recorded (${health.failureCount}/${config.failureThreshold}): ${error.message}`,
+    `[CircuitBreaker] Provider ${providerId} failure recorded (${health.failureCount}/${policy.consecutiveFailureThreshold}): ${error.message}`,
     {
       providerId,
       failureCount: health.failureCount,
-      threshold: config.failureThreshold,
+      threshold: policy.consecutiveFailureThreshold,
       errorMessage: error.message,
     }
   );
@@ -584,7 +769,7 @@ export async function recordFailure(
 
   // 检查是否需要打开熔断器
   // failureThreshold = 0 表示禁用熔断器
-  if (health.failureCount >= config.failureThreshold) {
+  if (health.failureCount >= policy.consecutiveFailureThreshold) {
     const latestConfig = await getProviderConfigForHealth(providerId, health, {
       forceReload: true,
     });
@@ -592,14 +777,17 @@ export async function recordFailure(
       return;
     }
 
-    if (health.failureCount < latestConfig.failureThreshold) {
+    const latestPolicy = resolveProviderCircuitPolicy(latestConfig);
+    if (health.failureCount < latestPolicy.consecutiveFailureThreshold) {
       persistStateToRedis(providerId, health);
       return;
     }
 
     if (!isCircuitStateOpen(health)) {
+      health.openCount = (health.openCount ?? 0) + 1;
       health.circuitState = "open";
-      health.circuitOpenUntil = Date.now() + latestConfig.openDuration;
+      const openDuration = calculateProviderCircuitOpenDuration(latestPolicy, health.openCount);
+      health.circuitOpenUntil = Date.now() + openDuration;
       health.halfOpenSuccessCount = 0;
 
       const retryAt = new Date(health.circuitOpenUntil).toISOString();
@@ -609,7 +797,7 @@ export async function recordFailure(
         {
           providerId,
           failureCount: health.failureCount,
-          openDuration: latestConfig.openDuration,
+          openDuration,
           retryAt,
         }
       );
@@ -686,14 +874,44 @@ async function triggerCircuitBreakerAlert(
 export async function recordSuccess(
   providerId: number,
   ttfbMs?: number | null,
-  requestStartedAt?: number
+  requestStartedAt?: number,
+  circuitPermitToken?: string | null
 ): Promise<void> {
   recordSmartProviderSuccess(providerId, ttfbMs, requestStartedAt);
   const health = await getOrCreateHealth(providerId);
   const config = await getProviderConfigForHealth(providerId, health);
+  const policy = resolveProviderCircuitPolicy(config);
   let stateChanged = false;
 
   if (handleDisabledCircuitBreaker(providerId, health, config)) {
+    if (circuitPermitToken) {
+      await recordProviderCircuitOutcome({
+        providerId,
+        outcome: "ignored",
+        policy,
+        requestStartedAt: requestStartedAt ?? Date.now(),
+        permitToken: circuitPermitToken,
+      });
+    }
+    return;
+  }
+
+  const atomicState = await recordProviderCircuitOutcome({
+    providerId,
+    outcome: "success",
+    policy,
+    requestStartedAt: requestStartedAt ?? Date.now(),
+    permitToken: circuitPermitToken,
+  });
+  if (atomicState) {
+    const previousState = health.circuitState;
+    applyAtomicState(health, atomicState);
+    if (previousState === "half-open" && atomicState.circuitState === "closed") {
+      logger.info(`[CircuitBreaker] Provider ${providerId} circuit closed after recovery`, {
+        providerId,
+        successThreshold: config.halfOpenSuccessThreshold,
+      });
+    }
     return;
   }
 
@@ -776,8 +994,6 @@ export function getAllHealthStatus(): Record<number, ProviderHealth> {
         logger.info(
           `[CircuitBreaker] Provider ${providerId} auto-transitioned to half-open (on status check)`
         );
-        // 持久化状态变更到 Redis
-        persistStateToRedis(providerId, health);
       }
     }
 
@@ -943,11 +1159,8 @@ export function resetCircuit(providerId: number): void {
   const oldState = health.circuitState;
 
   // 重置所有状态
-  health.circuitState = "closed";
-  health.failureCount = 0;
-  health.lastFailureTime = null;
-  health.circuitOpenUntil = null;
-  health.halfOpenSuccessCount = 0;
+  resetHealthToClosed(health);
+  void resetProviderCircuitRuntime(providerId);
 
   logger.info(
     `[CircuitBreaker] Provider ${providerId} circuit manually reset from ${oldState} to closed`,
@@ -977,13 +1190,7 @@ export async function forceCloseCircuitState(
     resetHealthToClosed(health);
   }
 
-  await saveCircuitState(providerId, {
-    failureCount: 0,
-    lastFailureTime: null,
-    circuitState: "closed",
-    circuitOpenUntil: null,
-    halfOpenSuccessCount: 0,
-  });
+  await resetProviderCircuitRuntime(providerId);
 
   logger.info(`[CircuitBreaker] Provider ${providerId} circuit forced closed`, {
     providerId,
@@ -1060,9 +1267,8 @@ export async function clearProviderState(providerId: number): Promise<void> {
   configCacheVersion.delete(providerId);
 
   // 清除 Redis 状态
-  const { deleteCircuitState } = await import("@/lib/redis/circuit-breaker-state");
   const { clearSingleProviderCostCache } = await import("@/lib/redis/cost-cache-cleanup");
-  await deleteCircuitState(providerId);
+  await clearProviderCircuitRuntime(providerId);
   await clearSingleProviderCostCache({ providerId }).catch(() => null);
 
   logger.info(`[CircuitBreaker] Cleared all state for provider ${providerId}`, {

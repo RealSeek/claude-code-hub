@@ -64,6 +64,7 @@ vi.mock("@/lib/circuit-breaker", () => ({
   getProviderHealthInfo: mocks.getProviderHealthInfo,
   recordSuccess: mocks.recordSuccess,
   recordFailure: mocks.recordFailure,
+  tryAcquireProviderCircuitPermit: vi.fn(async () => ({ allowed: true, permitToken: null })),
 }));
 
 vi.mock("@/lib/vendor-type-circuit-breaker", () => ({
