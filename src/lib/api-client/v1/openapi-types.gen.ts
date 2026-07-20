@@ -4787,7 +4787,7 @@ export interface operations {
                     /** @description New-API session cookie. Write-only. */
                     upstream_billing_cookie?: string | null;
                     /** @description New-API account user id. */
-                    upstream_billing_user_id?: string;
+                    upstream_billing_user_id?: string | null;
                     /**
                      * @description Scheduled upstream billing refresh interval in minutes; zero disables it.
                      * @default 30

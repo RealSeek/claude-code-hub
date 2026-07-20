@@ -567,6 +567,7 @@ export const ProviderCreateSchema = z
       .trim()
       .min(1)
       .max(128)
+      .nullable()
       .optional()
       .describe("New-API account user id."),
     upstream_billing_refresh_interval_minutes: z.coerce
