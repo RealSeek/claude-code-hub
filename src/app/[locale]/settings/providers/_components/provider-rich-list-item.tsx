@@ -737,11 +737,9 @@ function ProviderRichListItemInner({
                   {upstreamBilling.balanceUsd !== null
                     ? formatCurrency(upstreamBilling.balanceUsd, "USD")
                     : tList("upstreamBalanceUnavailable")}
-                  {upstreamBilling.status === "partial"
-                    ? ` · ${tList("upstreamBillingPartial")}`
-                    : upstreamBilling.balanceAggregation === "sum_of_keys"
-                      ? ` · ${tList("upstreamBillingKeySum")}`
-                      : ""}
+                  {upstreamBilling.balanceAggregation === "sum_of_keys"
+                    ? ` · ${tList("upstreamBillingKeySum")}`
+                    : ""}
                   {upstreamBilling.effectiveMultiplier !== null
                     ? ` · ${upstreamBilling.effectiveMultiplier}x`
                     : ""}
@@ -1111,11 +1109,9 @@ function ProviderRichListItemInner({
                   </div>
                   <div className="text-xs font-mono text-muted-foreground mt-0.5">
                     {upstreamBilling.source}
-                    {upstreamBilling.status === "partial"
-                      ? ` · ${tList("upstreamBillingPartial")}`
-                      : upstreamBilling.balanceAggregation === "sum_of_keys"
-                        ? ` · ${tList("upstreamBillingKeySum")}`
-                        : ""}
+                    {upstreamBilling.balanceAggregation === "sum_of_keys"
+                      ? ` · ${tList("upstreamBillingKeySum")}`
+                      : ""}
                     {upstreamBilling.effectiveMultiplier !== null
                       ? ` · ${upstreamBilling.effectiveMultiplier}x`
                       : ""}
