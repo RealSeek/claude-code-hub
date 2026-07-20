@@ -444,6 +444,12 @@
       "placeholder": "2",
       "desc": "半开状态下成功多少次后完全恢复"
     },
+    "rollingWindow": { "label": "滚动窗口（秒）", "desc": "统计请求成功与失败的时间范围" },
+    "minimumSamples": { "label": "最少样本数", "desc": "达到该请求数后才按失败率判断熔断" },
+    "failureRate": { "label": "失败率阈值（%）", "desc": "窗口内失败率达到该比例时触发熔断" },
+    "consecutiveFailure": { "label": "连续失败阈值", "desc": "无需等待样本数，连续失败达到该值立即熔断" },
+    "halfOpenConcurrency": { "label": "半开探测并发", "desc": "半开状态允许同时执行的探测请求数" },
+    "halfOpenLease": { "label": "半开租约（秒）", "desc": "探测请求占用许可的最长时间" },
     "maxRetryAttempts": {
       "label": "单供应商最大尝试次数",
       "placeholder": "2",

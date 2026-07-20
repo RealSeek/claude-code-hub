@@ -446,6 +446,8 @@ describe("Provider Actions - Async Optimization", () => {
           today_calls: 10,
           last_call_time: new Date("2026-01-01T00:00:00.000Z"),
           last_call_model: "model-a",
+          recent_avg_ttfb_ms: 850,
+          recent_ttfb_samples: 8,
         },
         {
           id: 2,
@@ -453,6 +455,8 @@ describe("Provider Actions - Async Optimization", () => {
           today_calls: 0,
           last_call_time: "2026-01-02T00:00:00.000Z",
           last_call_model: null,
+          recent_avg_ttfb_ms: null,
+          recent_ttfb_samples: 0,
         },
       ]);
 
@@ -464,12 +468,16 @@ describe("Provider Actions - Async Optimization", () => {
         todayCalls: 10,
         lastCallTime: "2026-01-01T00:00:00.000Z",
         lastCallModel: "model-a",
+        recentAvgTtfbMs: 850,
+        recentTtfbSamples: 8,
       });
       expect(result[2]).toEqual({
         todayCost: "0",
         todayCalls: 0,
         lastCallTime: "2026-01-02T00:00:00.000Z",
         lastCallModel: null,
+        recentAvgTtfbMs: null,
+        recentTtfbSamples: 0,
       });
     });
 

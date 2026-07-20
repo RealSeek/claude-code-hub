@@ -452,6 +452,9 @@ export async function getProviderStatisticsAsync(): Promise<ProviderStatisticsMa
         todayCalls: s.today_calls,
         lastCallTime: lastCallTimeStr,
         lastCallModel: s.last_call_model,
+        recentAvgTtfbMs:
+          s.recent_avg_ttfb_ms == null ? null : Number(s.recent_avg_ttfb_ms),
+        recentTtfbSamples: s.recent_ttfb_samples ?? 0,
       };
     }
 
@@ -593,6 +596,12 @@ export async function addProvider(data: {
   circuit_breaker_failure_threshold?: number;
   circuit_breaker_open_duration?: number;
   circuit_breaker_half_open_success_threshold?: number;
+  circuit_breaker_rolling_window_duration?: number;
+  circuit_breaker_minimum_samples?: number;
+  circuit_breaker_failure_rate_threshold?: number;
+  circuit_breaker_consecutive_failure_threshold?: number;
+  circuit_breaker_half_open_max_concurrency?: number;
+  circuit_breaker_half_open_lease_duration?: number;
   proxy_url?: string | null;
   proxy_fallback_to_direct?: boolean;
   custom_headers?: Record<string, string> | null;
@@ -679,6 +688,17 @@ export async function addProvider(data: {
       circuit_breaker_open_duration: validated.circuit_breaker_open_duration ?? 1800000,
       circuit_breaker_half_open_success_threshold:
         validated.circuit_breaker_half_open_success_threshold ?? 2,
+      circuit_breaker_rolling_window_duration:
+        validated.circuit_breaker_rolling_window_duration ?? 60000,
+      circuit_breaker_minimum_samples: validated.circuit_breaker_minimum_samples ?? 20,
+      circuit_breaker_failure_rate_threshold:
+        validated.circuit_breaker_failure_rate_threshold ?? 0.4,
+      circuit_breaker_consecutive_failure_threshold:
+        validated.circuit_breaker_consecutive_failure_threshold ?? 8,
+      circuit_breaker_half_open_max_concurrency:
+        validated.circuit_breaker_half_open_max_concurrency ?? 2,
+      circuit_breaker_half_open_lease_duration:
+        validated.circuit_breaker_half_open_lease_duration ?? 120000,
       proxy_url: validated.proxy_url ?? null,
       proxy_fallback_to_direct: validated.proxy_fallback_to_direct ?? false,
       first_byte_timeout_streaming_ms:
@@ -728,6 +748,12 @@ export async function addProvider(data: {
         failureThreshold: provider.circuitBreakerFailureThreshold,
         openDuration: provider.circuitBreakerOpenDuration,
         halfOpenSuccessThreshold: provider.circuitBreakerHalfOpenSuccessThreshold,
+        rollingWindowDuration: provider.circuitBreakerRollingWindowDuration,
+        minimumSamples: provider.circuitBreakerMinimumSamples,
+        failureRateThreshold: provider.circuitBreakerFailureRateThreshold,
+        consecutiveFailureThreshold: provider.circuitBreakerConsecutiveFailureThreshold,
+        halfOpenMaxConcurrency: provider.circuitBreakerHalfOpenMaxConcurrency,
+        halfOpenLeaseDuration: provider.circuitBreakerHalfOpenLeaseDuration,
       });
       logger.debug("addProvider:config_synced_to_redis", {
         providerId: provider.id,
@@ -846,6 +872,12 @@ export async function editProvider(
     circuit_breaker_failure_threshold?: number;
     circuit_breaker_open_duration?: number;
     circuit_breaker_half_open_success_threshold?: number;
+    circuit_breaker_rolling_window_duration?: number;
+    circuit_breaker_minimum_samples?: number;
+    circuit_breaker_failure_rate_threshold?: number;
+    circuit_breaker_consecutive_failure_threshold?: number;
+    circuit_breaker_half_open_max_concurrency?: number;
+    circuit_breaker_half_open_lease_duration?: number;
     proxy_url?: string | null;
     proxy_fallback_to_direct?: boolean;
     custom_headers?: Record<string, string> | null;
@@ -1034,7 +1066,13 @@ export async function editProvider(
     const hasCircuitConfigChange =
       validated.circuit_breaker_failure_threshold !== undefined ||
       validated.circuit_breaker_open_duration !== undefined ||
-      validated.circuit_breaker_half_open_success_threshold !== undefined;
+      validated.circuit_breaker_half_open_success_threshold !== undefined ||
+      validated.circuit_breaker_rolling_window_duration !== undefined ||
+      validated.circuit_breaker_minimum_samples !== undefined ||
+      validated.circuit_breaker_failure_rate_threshold !== undefined ||
+      validated.circuit_breaker_consecutive_failure_threshold !== undefined ||
+      validated.circuit_breaker_half_open_max_concurrency !== undefined ||
+      validated.circuit_breaker_half_open_lease_duration !== undefined;
 
     if (hasCircuitConfigChange) {
       try {
@@ -1042,6 +1080,12 @@ export async function editProvider(
           failureThreshold: provider.circuitBreakerFailureThreshold,
           openDuration: provider.circuitBreakerOpenDuration,
           halfOpenSuccessThreshold: provider.circuitBreakerHalfOpenSuccessThreshold,
+          rollingWindowDuration: provider.circuitBreakerRollingWindowDuration,
+          minimumSamples: provider.circuitBreakerMinimumSamples,
+          failureRateThreshold: provider.circuitBreakerFailureRateThreshold,
+          consecutiveFailureThreshold: provider.circuitBreakerConsecutiveFailureThreshold,
+          halfOpenMaxConcurrency: provider.circuitBreakerHalfOpenMaxConcurrency,
+          halfOpenLeaseDuration: provider.circuitBreakerHalfOpenLeaseDuration,
         });
         // 清除配置缓存并广播（跨实例立即生效）
         await publishCircuitBreakerConfigInvalidation(providerId);

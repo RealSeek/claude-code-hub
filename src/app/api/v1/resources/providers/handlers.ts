@@ -769,6 +769,12 @@ function sanitizeProvider(
     circuitBreakerFailureThreshold: provider.circuitBreakerFailureThreshold,
     circuitBreakerOpenDuration: provider.circuitBreakerOpenDuration,
     circuitBreakerHalfOpenSuccessThreshold: provider.circuitBreakerHalfOpenSuccessThreshold,
+    circuitBreakerRollingWindowDuration: provider.circuitBreakerRollingWindowDuration ?? 60000,
+    circuitBreakerMinimumSamples: provider.circuitBreakerMinimumSamples ?? 20,
+    circuitBreakerFailureRateThreshold: provider.circuitBreakerFailureRateThreshold ?? 0.4,
+    circuitBreakerConsecutiveFailureThreshold: provider.circuitBreakerConsecutiveFailureThreshold ?? 8,
+    circuitBreakerHalfOpenMaxConcurrency: provider.circuitBreakerHalfOpenMaxConcurrency ?? 2,
+    circuitBreakerHalfOpenLeaseDuration: provider.circuitBreakerHalfOpenLeaseDuration ?? 120000,
     proxyUrl: redactUrlCredentials(provider.proxyUrl),
     proxyFallbackToDirect: provider.proxyFallbackToDirect,
     customHeaders: redactHeaderRecord(provider.customHeaders),
@@ -796,7 +802,15 @@ function sanitizeProvider(
     lastCallModel: statistics?.lastCallModel ?? provider.lastCallModel,
     createdAt: provider.createdAt,
     updatedAt: provider.updatedAt,
-    ...(statistics ? { statistics } : {}),
+    ...(statistics
+      ? {
+          statistics: {
+            ...statistics,
+            recentAvgTtfbMs: statistics.recentAvgTtfbMs ?? null,
+            recentTtfbSamples: statistics.recentTtfbSamples ?? 0,
+          },
+        }
+      : {}),
   };
 }
 

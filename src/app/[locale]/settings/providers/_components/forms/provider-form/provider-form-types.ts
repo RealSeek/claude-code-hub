@@ -108,6 +108,12 @@ export interface CircuitBreakerState {
   failureThreshold: number | undefined;
   openDurationMinutes: number | undefined;
   halfOpenSuccessThreshold: number | undefined;
+  rollingWindowSeconds: number | undefined;
+  minimumSamples: number | undefined;
+  failureRatePercent: number | undefined;
+  consecutiveFailureThreshold: number | undefined;
+  halfOpenMaxConcurrency: number | undefined;
+  halfOpenLeaseSeconds: number | undefined;
   maxRetryAttempts: number | null;
 }
 
@@ -211,6 +217,12 @@ export type ProviderFormAction =
   | { type: "SET_FAILURE_THRESHOLD"; payload: number | undefined }
   | { type: "SET_OPEN_DURATION_MINUTES"; payload: number | undefined }
   | { type: "SET_HALF_OPEN_SUCCESS_THRESHOLD"; payload: number | undefined }
+  | { type: "SET_ROLLING_WINDOW_SECONDS"; payload: number | undefined }
+  | { type: "SET_MINIMUM_SAMPLES"; payload: number | undefined }
+  | { type: "SET_FAILURE_RATE_PERCENT"; payload: number | undefined }
+  | { type: "SET_CONSECUTIVE_FAILURE_THRESHOLD"; payload: number | undefined }
+  | { type: "SET_HALF_OPEN_MAX_CONCURRENCY"; payload: number | undefined }
+  | { type: "SET_HALF_OPEN_LEASE_SECONDS"; payload: number | undefined }
   | { type: "SET_MAX_RETRY_ATTEMPTS"; payload: number | null }
   // Network actions
   | { type: "SET_PROXY_URL"; payload: string }

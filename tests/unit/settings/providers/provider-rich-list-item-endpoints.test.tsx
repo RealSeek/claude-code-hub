@@ -284,6 +284,33 @@ describe("ProviderRichListItem Endpoint Display", () => {
     unmount();
   });
 
+  test("renders recent successful TTFB when statistics are available", async () => {
+    const provider = makeProviderDisplay();
+    const { unmount } = renderWithProviders(
+      <ProviderRichListItem
+        provider={provider}
+        currentUser={ADMIN_USER}
+        statistics={{
+          todayCost: "0",
+          todayCalls: 1,
+          lastCallTime: null,
+          lastCallModel: null,
+          recentAvgTtfbMs: 1250,
+          recentTtfbSamples: 6,
+        }}
+        enableMultiProviderTypes={true}
+      />
+    );
+
+    await flushTicks(5);
+
+    expect(document.body.textContent).toContain("5m TTFB");
+    expect(document.body.textContent).toContain("1.3s");
+    expect(document.body.textContent).toContain("6 samples");
+
+    unmount();
+  });
+
   test("余额查询完成后会从骨架屏更新为真实余额", async () => {
     const provider = makeProviderDisplay();
     const initial = (

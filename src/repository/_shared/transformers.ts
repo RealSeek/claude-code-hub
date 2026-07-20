@@ -143,6 +143,17 @@ export function toProvider(dbProvider: any): Provider {
     circuitBreakerFailureThreshold: dbProvider?.circuitBreakerFailureThreshold ?? 5,
     circuitBreakerOpenDuration: dbProvider?.circuitBreakerOpenDuration ?? 1800000,
     circuitBreakerHalfOpenSuccessThreshold: dbProvider?.circuitBreakerHalfOpenSuccessThreshold ?? 2,
+    circuitBreakerRollingWindowDuration: dbProvider?.circuitBreakerRollingWindowDuration ?? 60000,
+    circuitBreakerMinimumSamples: dbProvider?.circuitBreakerMinimumSamples ?? 20,
+    circuitBreakerFailureRateThreshold:
+      dbProvider?.circuitBreakerFailureRateThreshold != null
+        ? Number(dbProvider.circuitBreakerFailureRateThreshold)
+        : 0.4,
+    circuitBreakerConsecutiveFailureThreshold:
+      dbProvider?.circuitBreakerConsecutiveFailureThreshold ?? 8,
+    circuitBreakerHalfOpenMaxConcurrency: dbProvider?.circuitBreakerHalfOpenMaxConcurrency ?? 2,
+    circuitBreakerHalfOpenLeaseDuration: dbProvider?.circuitBreakerHalfOpenLeaseDuration ?? 120000,
+    circuitBreakerBaseOpenDuration: dbProvider?.circuitBreakerBaseOpenDuration ?? 60000,
     proxyUrl: dbProvider?.proxyUrl ?? null,
     proxyFallbackToDirect: dbProvider?.proxyFallbackToDirect ?? false,
     customHeaders: dbProvider?.customHeaders ?? null,

@@ -270,6 +270,16 @@ export async function createProvider(providerData: CreateProviderData): Promise<
     circuitBreakerOpenDuration: providerData.circuit_breaker_open_duration ?? 1800000,
     circuitBreakerHalfOpenSuccessThreshold:
       providerData.circuit_breaker_half_open_success_threshold ?? 2,
+    circuitBreakerRollingWindowDuration: providerData.circuit_breaker_rolling_window_duration ?? 60000,
+    circuitBreakerMinimumSamples: providerData.circuit_breaker_minimum_samples ?? 20,
+    circuitBreakerFailureRateThreshold: String(
+      providerData.circuit_breaker_failure_rate_threshold ?? 0.4
+    ),
+    circuitBreakerConsecutiveFailureThreshold:
+      providerData.circuit_breaker_consecutive_failure_threshold ?? 8,
+    circuitBreakerHalfOpenMaxConcurrency: providerData.circuit_breaker_half_open_max_concurrency ?? 2,
+    circuitBreakerHalfOpenLeaseDuration:
+      providerData.circuit_breaker_half_open_lease_duration ?? 120000,
     proxyUrl: providerData.proxy_url ?? null,
     proxyFallbackToDirect: providerData.proxy_fallback_to_direct ?? false,
     customHeaders: providerData.custom_headers ?? null,
@@ -364,6 +374,12 @@ export async function createProvider(providerData: CreateProviderData): Promise<
         circuitBreakerFailureThreshold: providers.circuitBreakerFailureThreshold,
         circuitBreakerOpenDuration: providers.circuitBreakerOpenDuration,
         circuitBreakerHalfOpenSuccessThreshold: providers.circuitBreakerHalfOpenSuccessThreshold,
+        circuitBreakerRollingWindowDuration: providers.circuitBreakerRollingWindowDuration,
+        circuitBreakerMinimumSamples: providers.circuitBreakerMinimumSamples,
+        circuitBreakerFailureRateThreshold: providers.circuitBreakerFailureRateThreshold,
+        circuitBreakerConsecutiveFailureThreshold: providers.circuitBreakerConsecutiveFailureThreshold,
+        circuitBreakerHalfOpenMaxConcurrency: providers.circuitBreakerHalfOpenMaxConcurrency,
+        circuitBreakerHalfOpenLeaseDuration: providers.circuitBreakerHalfOpenLeaseDuration,
         proxyUrl: providers.proxyUrl,
         proxyFallbackToDirect: providers.proxyFallbackToDirect,
         customHeaders: providers.customHeaders,
@@ -482,6 +498,12 @@ export async function findProviderList(
       circuitBreakerFailureThreshold: providers.circuitBreakerFailureThreshold,
       circuitBreakerOpenDuration: providers.circuitBreakerOpenDuration,
       circuitBreakerHalfOpenSuccessThreshold: providers.circuitBreakerHalfOpenSuccessThreshold,
+      circuitBreakerRollingWindowDuration: providers.circuitBreakerRollingWindowDuration,
+      circuitBreakerMinimumSamples: providers.circuitBreakerMinimumSamples,
+      circuitBreakerFailureRateThreshold: providers.circuitBreakerFailureRateThreshold,
+      circuitBreakerConsecutiveFailureThreshold: providers.circuitBreakerConsecutiveFailureThreshold,
+      circuitBreakerHalfOpenMaxConcurrency: providers.circuitBreakerHalfOpenMaxConcurrency,
+      circuitBreakerHalfOpenLeaseDuration: providers.circuitBreakerHalfOpenLeaseDuration,
       proxyUrl: providers.proxyUrl,
       proxyFallbackToDirect: providers.proxyFallbackToDirect,
       customHeaders: providers.customHeaders,
@@ -582,6 +604,12 @@ export async function findAllProvidersFresh(): Promise<Provider[]> {
       circuitBreakerFailureThreshold: providers.circuitBreakerFailureThreshold,
       circuitBreakerOpenDuration: providers.circuitBreakerOpenDuration,
       circuitBreakerHalfOpenSuccessThreshold: providers.circuitBreakerHalfOpenSuccessThreshold,
+      circuitBreakerRollingWindowDuration: providers.circuitBreakerRollingWindowDuration,
+      circuitBreakerMinimumSamples: providers.circuitBreakerMinimumSamples,
+      circuitBreakerFailureRateThreshold: providers.circuitBreakerFailureRateThreshold,
+      circuitBreakerConsecutiveFailureThreshold: providers.circuitBreakerConsecutiveFailureThreshold,
+      circuitBreakerHalfOpenMaxConcurrency: providers.circuitBreakerHalfOpenMaxConcurrency,
+      circuitBreakerHalfOpenLeaseDuration: providers.circuitBreakerHalfOpenLeaseDuration,
       proxyUrl: providers.proxyUrl,
       proxyFallbackToDirect: providers.proxyFallbackToDirect,
       customHeaders: providers.customHeaders,
@@ -684,6 +712,12 @@ export async function findProviderById(id: number): Promise<Provider | null> {
       circuitBreakerFailureThreshold: providers.circuitBreakerFailureThreshold,
       circuitBreakerOpenDuration: providers.circuitBreakerOpenDuration,
       circuitBreakerHalfOpenSuccessThreshold: providers.circuitBreakerHalfOpenSuccessThreshold,
+      circuitBreakerRollingWindowDuration: providers.circuitBreakerRollingWindowDuration,
+      circuitBreakerMinimumSamples: providers.circuitBreakerMinimumSamples,
+      circuitBreakerFailureRateThreshold: providers.circuitBreakerFailureRateThreshold,
+      circuitBreakerConsecutiveFailureThreshold: providers.circuitBreakerConsecutiveFailureThreshold,
+      circuitBreakerHalfOpenMaxConcurrency: providers.circuitBreakerHalfOpenMaxConcurrency,
+      circuitBreakerHalfOpenLeaseDuration: providers.circuitBreakerHalfOpenLeaseDuration,
       proxyUrl: providers.proxyUrl,
       proxyFallbackToDirect: providers.proxyFallbackToDirect,
       customHeaders: providers.customHeaders,
@@ -830,6 +864,18 @@ export async function updateProvider(
   if (providerData.circuit_breaker_half_open_success_threshold !== undefined)
     dbData.circuitBreakerHalfOpenSuccessThreshold =
       providerData.circuit_breaker_half_open_success_threshold;
+  if (providerData.circuit_breaker_rolling_window_duration !== undefined)
+    dbData.circuitBreakerRollingWindowDuration = providerData.circuit_breaker_rolling_window_duration;
+  if (providerData.circuit_breaker_minimum_samples !== undefined)
+    dbData.circuitBreakerMinimumSamples = providerData.circuit_breaker_minimum_samples;
+  if (providerData.circuit_breaker_failure_rate_threshold !== undefined)
+    dbData.circuitBreakerFailureRateThreshold = providerData.circuit_breaker_failure_rate_threshold.toString();
+  if (providerData.circuit_breaker_consecutive_failure_threshold !== undefined)
+    dbData.circuitBreakerConsecutiveFailureThreshold = providerData.circuit_breaker_consecutive_failure_threshold;
+  if (providerData.circuit_breaker_half_open_max_concurrency !== undefined)
+    dbData.circuitBreakerHalfOpenMaxConcurrency = providerData.circuit_breaker_half_open_max_concurrency;
+  if (providerData.circuit_breaker_half_open_lease_duration !== undefined)
+    dbData.circuitBreakerHalfOpenLeaseDuration = providerData.circuit_breaker_half_open_lease_duration;
   if (providerData.proxy_url !== undefined) dbData.proxyUrl = providerData.proxy_url;
   if (providerData.proxy_fallback_to_direct !== undefined)
     dbData.proxyFallbackToDirect = providerData.proxy_fallback_to_direct;
@@ -977,6 +1023,12 @@ export async function updateProvider(
         circuitBreakerFailureThreshold: providers.circuitBreakerFailureThreshold,
         circuitBreakerOpenDuration: providers.circuitBreakerOpenDuration,
         circuitBreakerHalfOpenSuccessThreshold: providers.circuitBreakerHalfOpenSuccessThreshold,
+        circuitBreakerRollingWindowDuration: providers.circuitBreakerRollingWindowDuration,
+        circuitBreakerMinimumSamples: providers.circuitBreakerMinimumSamples,
+        circuitBreakerFailureRateThreshold: providers.circuitBreakerFailureRateThreshold,
+        circuitBreakerConsecutiveFailureThreshold: providers.circuitBreakerConsecutiveFailureThreshold,
+        circuitBreakerHalfOpenMaxConcurrency: providers.circuitBreakerHalfOpenMaxConcurrency,
+        circuitBreakerHalfOpenLeaseDuration: providers.circuitBreakerHalfOpenLeaseDuration,
         proxyUrl: providers.proxyUrl,
         proxyFallbackToDirect: providers.proxyFallbackToDirect,
         customHeaders: providers.customHeaders,
@@ -1912,6 +1964,8 @@ export type ProviderStatisticsRow = {
   today_calls: number;
   last_call_time: Date | null;
   last_call_model: string | null;
+  recent_avg_ttfb_ms: number | null;
+  recent_ttfb_samples: number;
 };
 
 // 轻量内存缓存：降低后台轮询/重复加载导致的重复扫描
@@ -1950,9 +2004,10 @@ export async function getProviderStatistics(): Promise<ProviderStatisticsRow[]> 
       const query = sql`
          WITH bounds AS (
            SELECT
-             (DATE_TRUNC('day', CURRENT_TIMESTAMP AT TIME ZONE ${timezone}) AT TIME ZONE ${timezone}) AS today_start,
-             ((DATE_TRUNC('day', CURRENT_TIMESTAMP AT TIME ZONE ${timezone}) + INTERVAL '1 day') AT TIME ZONE ${timezone}) AS tomorrow_start,
-             ((DATE_TRUNC('day', CURRENT_TIMESTAMP AT TIME ZONE ${timezone}) - INTERVAL '7 days') AT TIME ZONE ${timezone}) AS last7_start
+              (DATE_TRUNC('day', CURRENT_TIMESTAMP AT TIME ZONE ${timezone}) AT TIME ZONE ${timezone}) AS today_start,
+              ((DATE_TRUNC('day', CURRENT_TIMESTAMP AT TIME ZONE ${timezone}) + INTERVAL '1 day') AT TIME ZONE ${timezone}) AS tomorrow_start,
+              ((DATE_TRUNC('day', CURRENT_TIMESTAMP AT TIME ZONE ${timezone}) - INTERVAL '7 days') AT TIME ZONE ${timezone}) AS last7_start,
+              CURRENT_TIMESTAMP - INTERVAL '5 minutes' AS recent_ttfb_start
          ),
          provider_stats AS (
            -- 先按最终供应商聚合，再与 providers 做 LEFT JOIN，避免 providers × 今日请求 的笛卡尔积
@@ -1966,7 +2021,7 @@ export async function getProviderStatistics(): Promise<ProviderStatisticsRow[]> 
             AND created_at < (SELECT tomorrow_start FROM bounds)
           GROUP BY final_provider_id
         ),
-        latest_call AS (
+         latest_call AS (
           SELECT DISTINCT ON (final_provider_id)
             final_provider_id,
             created_at AS last_call_time,
@@ -1975,17 +2030,33 @@ export async function getProviderStatistics(): Promise<ProviderStatisticsRow[]> 
           WHERE blocked_by IS NULL
             AND created_at >= (SELECT last7_start FROM bounds)
           -- 性能优化：添加 7 天时间范围限制（避免扫描历史数据）
-          ORDER BY final_provider_id, created_at DESC, id DESC
+           ORDER BY final_provider_id, created_at DESC, id DESC
+        ),
+        recent_performance AS (
+          SELECT
+            final_provider_id,
+            AVG(ttfb_ms)::double precision AS recent_avg_ttfb_ms,
+            COUNT(*)::integer AS recent_ttfb_samples
+          FROM usage_ledger
+          WHERE blocked_by IS NULL
+            AND is_success = TRUE
+            AND ttfb_ms IS NOT NULL
+            AND ttfb_ms >= 0
+            AND created_at >= (SELECT recent_ttfb_start FROM bounds)
+          GROUP BY final_provider_id
         )
         SELECT
           p.id,
           COALESCE(ps.today_cost, 0) AS today_cost,
           COALESCE(ps.today_calls, 0) AS today_calls,
           lc.last_call_time,
-          lc.last_call_model
+          lc.last_call_model,
+          rp.recent_avg_ttfb_ms,
+          COALESCE(rp.recent_ttfb_samples, 0) AS recent_ttfb_samples
         FROM providers p
         LEFT JOIN provider_stats ps ON p.id = ps.final_provider_id
         LEFT JOIN latest_call lc ON p.id = lc.final_provider_id
+        LEFT JOIN recent_performance rp ON p.id = rp.final_provider_id
         WHERE p.deleted_at IS NULL
         ORDER BY p.id ASC
       `;

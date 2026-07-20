@@ -314,6 +314,12 @@ export function createInitialState(
           analysis.circuitBreaker.halfOpenSuccessThreshold.status === "uniform"
             ? analysis.circuitBreaker.halfOpenSuccessThreshold.value
             : undefined,
+        rollingWindowSeconds: 60,
+        minimumSamples: 20,
+        failureRatePercent: 40,
+        consecutiveFailureThreshold: 8,
+        halfOpenMaxConcurrency: 2,
+        halfOpenLeaseSeconds: 120,
         maxRetryAttempts:
           analysis.circuitBreaker.maxRetryAttempts.status === "uniform"
             ? analysis.circuitBreaker.maxRetryAttempts.value
@@ -422,6 +428,12 @@ export function createInitialState(
         failureThreshold: undefined,
         openDurationMinutes: undefined,
         halfOpenSuccessThreshold: undefined,
+        rollingWindowSeconds: 60,
+        minimumSamples: 20,
+        failureRatePercent: 40,
+        consecutiveFailureThreshold: 8,
+        halfOpenMaxConcurrency: 2,
+        halfOpenLeaseSeconds: 120,
         maxRetryAttempts: null,
       },
       network: {
@@ -517,6 +529,13 @@ export function createInitialState(
         ? sourceProvider.circuitBreakerOpenDuration / 60000
         : undefined,
       halfOpenSuccessThreshold: sourceProvider?.circuitBreakerHalfOpenSuccessThreshold,
+      rollingWindowSeconds: (sourceProvider?.circuitBreakerRollingWindowDuration ?? 60000) / 1000,
+      minimumSamples: sourceProvider?.circuitBreakerMinimumSamples ?? 20,
+      failureRatePercent: (sourceProvider?.circuitBreakerFailureRateThreshold ?? 0.4) * 100,
+      consecutiveFailureThreshold:
+        sourceProvider?.circuitBreakerConsecutiveFailureThreshold ?? 8,
+      halfOpenMaxConcurrency: sourceProvider?.circuitBreakerHalfOpenMaxConcurrency ?? 2,
+      halfOpenLeaseSeconds: (sourceProvider?.circuitBreakerHalfOpenLeaseDuration ?? 120000) / 1000,
       maxRetryAttempts: sourceProvider?.maxRetryAttempts ?? null,
     },
     network: {
@@ -784,6 +803,18 @@ export function providerFormReducer(
         ...state,
         circuitBreaker: { ...state.circuitBreaker, halfOpenSuccessThreshold: action.payload },
       };
+    case "SET_ROLLING_WINDOW_SECONDS":
+      return { ...state, circuitBreaker: { ...state.circuitBreaker, rollingWindowSeconds: action.payload } };
+    case "SET_MINIMUM_SAMPLES":
+      return { ...state, circuitBreaker: { ...state.circuitBreaker, minimumSamples: action.payload } };
+    case "SET_FAILURE_RATE_PERCENT":
+      return { ...state, circuitBreaker: { ...state.circuitBreaker, failureRatePercent: action.payload } };
+    case "SET_CONSECUTIVE_FAILURE_THRESHOLD":
+      return { ...state, circuitBreaker: { ...state.circuitBreaker, consecutiveFailureThreshold: action.payload } };
+    case "SET_HALF_OPEN_MAX_CONCURRENCY":
+      return { ...state, circuitBreaker: { ...state.circuitBreaker, halfOpenMaxConcurrency: action.payload } };
+    case "SET_HALF_OPEN_LEASE_SECONDS":
+      return { ...state, circuitBreaker: { ...state.circuitBreaker, halfOpenLeaseSeconds: action.payload } };
     case "SET_MAX_RETRY_ATTEMPTS":
       return {
         ...state,

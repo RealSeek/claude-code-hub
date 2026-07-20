@@ -681,6 +681,18 @@ export const CreateProviderSchema = z
       .min(1, "恢复阈值不能少于1次")
       .max(10, "恢复阈值不能超过10次")
       .optional(),
+    circuit_breaker_rolling_window_duration: z.coerce
+      .number().int("滑动窗口必须是整数").min(1000, "滑动窗口不能少于1秒").max(3600000, "滑动窗口不能超过1小时").optional(),
+    circuit_breaker_minimum_samples: z.coerce
+      .number().int("最少样本数必须是整数").min(1, "最少样本数不能少于1").max(100000, "最少样本数不能超过100000").optional(),
+    circuit_breaker_failure_rate_threshold: z.coerce
+      .number().min(0, "失败率不能小于0").max(1, "失败率不能大于1").optional(),
+    circuit_breaker_consecutive_failure_threshold: z.coerce
+      .number().int("连续失败阈值必须是整数").min(1, "连续失败阈值不能少于1").max(100000, "连续失败阈值不能超过100000").optional(),
+    circuit_breaker_half_open_max_concurrency: z.coerce
+      .number().int("半开并发数必须是整数").min(1, "半开并发数不能少于1").max(1000, "半开并发数不能超过1000").optional(),
+    circuit_breaker_half_open_lease_duration: z.coerce
+      .number().int("半开租约必须是整数").min(1000, "半开租约不能少于1秒").max(3600000, "半开租约不能超过1小时").optional(),
     // 代理配置
     proxy_url: z.string().max(512, "代理地址长度不能超过512个字符").nullable().optional(),
     proxy_fallback_to_direct: z.boolean().optional().default(false),
@@ -958,6 +970,12 @@ export const UpdateProviderSchema = z
       .min(1, "恢复阈值不能少于1次")
       .max(10, "恢复阈值不能超过10次")
       .optional(),
+    circuit_breaker_rolling_window_duration: z.coerce.number().int().min(1000).max(3600000).optional(),
+    circuit_breaker_minimum_samples: z.coerce.number().int().min(1).max(100000).optional(),
+    circuit_breaker_failure_rate_threshold: z.coerce.number().min(0).max(1).optional(),
+    circuit_breaker_consecutive_failure_threshold: z.coerce.number().int().min(1).max(100000).optional(),
+    circuit_breaker_half_open_max_concurrency: z.coerce.number().int().min(1).max(1000).optional(),
+    circuit_breaker_half_open_lease_duration: z.coerce.number().int().min(1000).max(3600000).optional(),
     // 代理配置
     proxy_url: z.string().max(512, "代理地址长度不能超过512个字符").nullable().optional(),
     proxy_fallback_to_direct: z.boolean().optional(),

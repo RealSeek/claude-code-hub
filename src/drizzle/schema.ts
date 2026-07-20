@@ -312,6 +312,16 @@ export const providers = pgTable('providers', {
   circuitBreakerFailureThreshold: integer('circuit_breaker_failure_threshold').default(5),
   circuitBreakerOpenDuration: integer('circuit_breaker_open_duration').default(1800000), // 30分钟（毫秒）
   circuitBreakerHalfOpenSuccessThreshold: integer('circuit_breaker_half_open_success_threshold').default(2),
+  circuitBreakerRollingWindowDuration: integer('circuit_breaker_rolling_window_duration').default(60000),
+  circuitBreakerMinimumSamples: integer('circuit_breaker_minimum_samples').default(20),
+  circuitBreakerFailureRateThreshold: numeric('circuit_breaker_failure_rate_threshold', {
+    precision: 5,
+    scale: 4,
+  }).default('0.4'),
+  circuitBreakerConsecutiveFailureThreshold: integer('circuit_breaker_consecutive_failure_threshold').default(8),
+  circuitBreakerHalfOpenMaxConcurrency: integer('circuit_breaker_half_open_max_concurrency').default(2),
+  circuitBreakerHalfOpenLeaseDuration: integer('circuit_breaker_half_open_lease_duration').default(120000),
+  circuitBreakerBaseOpenDuration: integer('circuit_breaker_base_open_duration').default(60000), // 指数退避初始开路时长（毫秒）
 
   // 代理配置（支持 HTTP/HTTPS/SOCKS5）
   proxyUrl: varchar('proxy_url', { length: 512 }),

@@ -103,6 +103,12 @@
       "label": "Recovery Threshold",
       "placeholder": "2"
     },
+    "rollingWindow": { "label": "Rolling Window (sec)", "desc": "Time range used to count successful and failed requests" },
+    "minimumSamples": { "label": "Minimum Samples", "desc": "Requests required before failure-rate evaluation" },
+    "failureRate": { "label": "Failure Rate (%)", "desc": "Open the circuit when the window failure rate reaches this value" },
+    "consecutiveFailure": { "label": "Consecutive Failures", "desc": "Open immediately after this many consecutive failures" },
+    "halfOpenConcurrency": { "label": "Half-Open Concurrency", "desc": "Concurrent probe requests allowed while half-open" },
+    "halfOpenLease": { "label": "Half-Open Lease (sec)", "desc": "Maximum time a probe permit remains occupied" },
     "summary": "{failureThreshold} failures / {openDuration} min break / {successThreshold} successes to recover / {maxRetryAttempts} attempts per provider",
     "title": "Circuit Breaker"
   },

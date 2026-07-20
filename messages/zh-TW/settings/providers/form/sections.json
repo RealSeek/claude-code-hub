@@ -103,6 +103,12 @@
       "label": "恢復閾值（次）",
       "placeholder": "2"
     },
+    "rollingWindow": { "label": "滾動視窗（秒）", "desc": "統計成功與失敗請求的時間範圍" },
+    "minimumSamples": { "label": "最少樣本數", "desc": "達到此請求數後才按失敗率判斷熔斷" },
+    "failureRate": { "label": "失敗率閾值（%）", "desc": "視窗內失敗率達到此比例時觸發熔斷" },
+    "consecutiveFailure": { "label": "連續失敗閾值", "desc": "連續失敗達到此值時立即熔斷" },
+    "halfOpenConcurrency": { "label": "半開探測並行數", "desc": "半開狀態允許同時執行的探測請求數" },
+    "halfOpenLease": { "label": "半開租約（秒）", "desc": "探測請求占用許可的最長時間" },
     "summary": "{failureThreshold} 次失敗 / {openDuration} 分鐘熔斷 / {successThreshold} 次成功恢復 / 每個供應商最多 {maxRetryAttempts} 次嘗試",
     "title": "斷路器設定"
   },

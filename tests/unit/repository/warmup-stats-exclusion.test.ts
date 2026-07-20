@@ -158,6 +158,8 @@ describe("Warmup 请求：不计入任何聚合统计", () => {
         today_calls: 0,
         last_call_time: null,
         last_call_model: null,
+        recent_avg_ttfb_ms: null,
+        recent_ttfb_samples: 0,
       },
     ]);
 
@@ -198,5 +200,8 @@ describe("Warmup 请求：不计入任何聚合统计", () => {
     const querySql = sqlToString(queryArg);
     expect(querySql.toLowerCase()).toContain("blocked_by");
     expect(querySql.toLowerCase()).toContain("is null");
+    expect(querySql.toLowerCase()).toContain("interval '5 minutes'");
+    expect(querySql.toLowerCase()).toContain("is_success = true");
+    expect(querySql.toLowerCase()).toContain("ttfb_ms is not null");
   });
 });

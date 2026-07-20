@@ -103,6 +103,12 @@
       "label": "回復しきい値（回）",
       "placeholder": "2"
     },
+    "rollingWindow": { "label": "ローリング期間（秒）", "desc": "成功・失敗リクエストを集計する期間" },
+    "minimumSamples": { "label": "最小サンプル数", "desc": "失敗率を評価する前に必要なリクエスト数" },
+    "failureRate": { "label": "失敗率しきい値（%）", "desc": "期間内の失敗率がこの値に達すると遮断します" },
+    "consecutiveFailure": { "label": "連続失敗しきい値", "desc": "この回数連続で失敗すると即座に遮断します" },
+    "halfOpenConcurrency": { "label": "半開プローブ同時数", "desc": "半開状態で同時実行できるプローブ数" },
+    "halfOpenLease": { "label": "半開リース（秒）", "desc": "プローブ許可を保持できる最大時間" },
     "summary": "{failureThreshold} 回失敗 / {openDuration} 分間ブレーク / {successThreshold} 回成功で回復 / 各プロバイダー最大 {maxRetryAttempts} 回試行",
     "title": "サーキットブレーカー設定"
   },

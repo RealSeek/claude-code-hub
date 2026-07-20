@@ -314,6 +314,8 @@ describe("v1 providers read endpoints", () => {
       todayCalls: 5,
       lastCallTime: "2026-05-03T10:00:00.000Z",
       lastCallModel: "claude-sonnet-4-6",
+      recentAvgTtfbMs: null,
+      recentTtfbSamples: 0,
     });
     expect(matched?.todayTotalCostUsd).toBe("12.34");
     expect(matched?.todayCallCount).toBe(5);
