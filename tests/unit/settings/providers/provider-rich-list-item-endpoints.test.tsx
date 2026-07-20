@@ -355,6 +355,39 @@ describe("ProviderRichListItem Endpoint Display", () => {
     unmount();
   });
 
+  test("partial 状态也按单 Key 简洁样式展示余额与倍率", async () => {
+    const provider = makeProviderDisplay();
+    const { unmount } = renderWithProviders(
+      <ProviderRichListItem
+        provider={provider}
+        currentUser={ADMIN_USER}
+        upstreamBillingLoading={false}
+        upstreamBilling={{
+          providerId: provider.id,
+          source: "sub2api",
+          status: "partial",
+          balanceUsd: 76.76,
+          balanceRaw: 76.76,
+          balanceScope: "key",
+          quotaPerUnit: null,
+          effectiveMultiplier: null,
+          observedAt: "2026-07-20T00:00:00.000Z",
+          errorCode: null,
+          balanceAggregation: "single_key",
+        }}
+        enableMultiProviderTypes={true}
+      />
+    );
+
+    await flushTicks();
+    expect(document.body.textContent).toContain("$76.76");
+    expect(document.body.textContent).toContain("sub2api");
+    expect(document.body.textContent).not.toContain("Some keys probed");
+    expect(document.body.textContent).not.toContain("余额未汇总");
+
+    unmount();
+  });
+
   test("New-API 显示有限账户余额与 Token 分组倍率", async () => {
     const provider = makeProviderDisplay({ upstreamBillingType: "new-api" });
     const { unmount } = renderWithProviders(
