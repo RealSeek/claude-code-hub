@@ -448,6 +448,14 @@ describe("Provider Actions - Async Optimization", () => {
           last_call_model: "model-a",
           recent_avg_ttfb_ms: 850,
           recent_ttfb_samples: 8,
+          recent_min_ttfb_ms: 200,
+          recent_max_ttfb_ms: 2000,
+          recent_p50_ttfb_ms: 700,
+          recent_p95_ttfb_ms: 1800,
+          recent_ttfb_sample_details: [
+            { ttfbMs: 900, at: "2026-01-01T00:01:00.000Z" },
+            { ttfbMs: 800, at: "2026-01-01T00:00:30.000Z" },
+          ],
         },
         {
           id: 2,
@@ -457,6 +465,11 @@ describe("Provider Actions - Async Optimization", () => {
           last_call_model: null,
           recent_avg_ttfb_ms: null,
           recent_ttfb_samples: 0,
+          recent_min_ttfb_ms: null,
+          recent_max_ttfb_ms: null,
+          recent_p50_ttfb_ms: null,
+          recent_p95_ttfb_ms: null,
+          recent_ttfb_sample_details: null,
         },
       ]);
 
@@ -470,6 +483,14 @@ describe("Provider Actions - Async Optimization", () => {
         lastCallModel: "model-a",
         recentAvgTtfbMs: 850,
         recentTtfbSamples: 8,
+        recentMinTtfbMs: 200,
+        recentMaxTtfbMs: 2000,
+        recentP50TtfbMs: 700,
+        recentP95TtfbMs: 1800,
+        recentTtfbSampleDetails: [
+          { ttfbMs: 900, at: "2026-01-01T00:01:00.000Z" },
+          { ttfbMs: 800, at: "2026-01-01T00:00:30.000Z" },
+        ],
       });
       expect(result[2]).toEqual({
         todayCost: "0",
@@ -478,6 +499,11 @@ describe("Provider Actions - Async Optimization", () => {
         lastCallModel: null,
         recentAvgTtfbMs: null,
         recentTtfbSamples: 0,
+        recentMinTtfbMs: null,
+        recentMaxTtfbMs: null,
+        recentP50TtfbMs: null,
+        recentP95TtfbMs: null,
+        recentTtfbSampleDetails: [],
       });
     });
 
