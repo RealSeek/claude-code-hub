@@ -534,6 +534,8 @@ export async function isCircuitOpen(
     if (health.circuitOpenUntil && now > health.circuitOpenUntil) {
       health.circuitState = "half-open";
       health.halfOpenSuccessCount = 0;
+      // 必须写回 Redis：否则多实例/管理台仍会读到过期 open，UI 表现为“一直熔断”。
+      persistStateToRedis(providerId, health);
       logger.info(`[CircuitBreaker] Provider ${providerId} transitioned to half-open`);
       return false; // 允许尝试
     }

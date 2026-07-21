@@ -115,6 +115,20 @@ describe("provider circuit policy", () => {
         classificationLevel: "channel",
       })
     ).toBe(true);
+    expect(
+      isProviderCircuitEligibleFailure({
+        statusCode: 502,
+        message: "Provider returned 502: new_api_error: 服务异常，请联系站长",
+        body: '{"error":{"code":"model_not_found","message":"服务异常，请联系站长","type":"new_api_error"}}',
+      })
+    ).toBe(false);
+    expect(
+      isProviderCircuitEligibleFailure({
+        statusCode: 502,
+        message: "Upstream service temporarily unavailable",
+        body: '{"error":{"message":"Upstream service temporarily unavailable","type":"upstream_error"}}',
+      })
+    ).toBe(true);
   });
 
   test("failureThreshold zero still disables the breaker", () => {

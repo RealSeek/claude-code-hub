@@ -77,6 +77,43 @@ afterEach(() => {
 });
 
 describe("circuit-breaker", () => {
+  test("isCircuitOpen: open 过期后应转为 half-open 并持久化，避免 UI/多实例长期显示 open", async () => {
+    setupFakeTime();
+    vi.resetModules();
+
+    let redisState: SavedCircuitState | null = {
+      failureCount: 16,
+      lastFailureTime: Date.now() - 120_000,
+      circuitState: "open",
+      circuitOpenUntil: Date.now() - 1,
+      halfOpenSuccessCount: 0,
+    };
+    const saveStateMock = vi.fn(async (_providerId: number, state: SavedCircuitState) => {
+      redisState = state;
+    });
+
+    setupCircuitBreakerMocks({
+      redis: {
+        loadCircuitState: vi.fn(async () => redisState),
+        saveCircuitState: saveStateMock,
+      },
+      config: {
+        loadProviderCircuitConfig: vi.fn(async () => ({
+          failureThreshold: 5,
+          openDuration: 300_000,
+          halfOpenSuccessThreshold: 2,
+        })),
+      },
+    });
+
+    const { getCircuitState, isCircuitOpen } = await import("@/lib/circuit-breaker");
+
+    expect(await isCircuitOpen(42)).toBe(false);
+    expect(getCircuitState(42)).toBe("half-open");
+    expect(saveStateMock).toHaveBeenCalled();
+    expect(redisState?.circuitState).toBe("half-open");
+  });
+
   test("failureThreshold=0 时应视为禁用：即便 Redis 为 OPEN 也不应阻止请求，并自动复位为 CLOSED", async () => {
     setupFakeTime();
 

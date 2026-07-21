@@ -71,6 +71,11 @@ const CLIENT_FAILURE_PATTERNS = [
   /input (?:is )?too (?:large|long)/i,
   /too many tokens/i,
   /token limit/i,
+  // 上游常把“无可用通道/模型未映射”包装成 5xx + model_not_found，这不是供应商进程故障。
+  /model[_\s-]?not[_\s-]?found/i,
+  /unknown model/i,
+  /does not exist/i,
+  /no available channel/i,
 ];
 
 export function isProviderCircuitEligibleFailure(input: {
