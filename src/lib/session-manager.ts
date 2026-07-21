@@ -1811,8 +1811,8 @@ export class SessionManager {
 
       return {
         updated: false,
-        reason: "keep_healthy_higher_priority",
-        details: `保持原供应商 ${currentProvider.name} (priority=${currentPriority}, 健康)，拒绝供应商 ${newProviderId} (priority=${newProviderPriority})`,
+        reason: "keep_cache_stickiness",
+        details: `保持原供应商 ${currentProvider.name} (priority=${currentPriority}) 以保留 prompt cache，拒绝供应商 ${newProviderId} (priority=${newProviderPriority})`,
       };
     } catch (error) {
       logger.error("SessionManager: Failed to update session binding", {
@@ -3328,6 +3328,15 @@ export class SessionManager {
     try {
       // 使用 prompt_cache_key 作为新的 Session ID（添加前缀以区分）
       const codexSessionId = `codex_${promptCacheKey}`;
+      // 同时钉住“当前请求 session”与 “codex_prompt_cache_key session”，
+      // 避免两者分裂导致后续请求走错供应商、打穿 prompt cache。
+      const sessionIdsToBind = Array.from(
+        new Set(
+          [codexSessionId, currentSessionId].filter(
+            (id): id is string => typeof id === "string" && id.length > 0
+          )
+        )
+      );
 
       if (keyId != null) {
         const binding = await readOrReconcileSessionBinding({

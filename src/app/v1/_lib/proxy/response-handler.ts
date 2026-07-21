@@ -1989,6 +1989,9 @@ function finalizeDeferredStreamingFinalizationIfNeeded(
     }
   }
 
+  // 仅“假 200 / 明确上游 HTTP 错误”时清绑定。
+  // 流中断（网络抖动、客户端 abort、半路 RST）不应拆掉 session 粘性，
+  // 否则下次请求会换供应商并丢失 prompt cache。
   const shouldClearSessionBindingOnFailure =
     ((clientAborted || !streamEndedNormally) && !clientAbortCompleteSuccess) ||
     detected.isError ||
@@ -2053,7 +2056,8 @@ function finalizeDeferredStreamingFinalizationIfNeeded(
     };
   }
 
-  // 未自然结束：不更新 session 绑定（避免把会话粘到不稳定 provider），但要避免把它误记为 200 completed。
+  // 未自然结束：不更新 session 绑定，也**不**清绑定。
+  // 清绑定会让下次请求换供应商并丢失 prompt cache；熔断/冷却已足够阻止坏供应商复用。
   //
   // 同时，为了让故障转移/熔断能正确工作：
   // - 客户端主动中断：不计入熔断器（这通常不是供应商问题）

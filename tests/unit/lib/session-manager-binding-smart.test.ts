@@ -163,14 +163,14 @@ describe("SessionManager.updateSessionBindingSmart forceUpdate", () => {
     const result = await SessionManager.updateSessionBindingSmart(
       SID,
       2,
-      10,
+      1, // higher priority number-wise (smaller = higher) still must not steal binding
       false,
       false,
       KEY_ID,
       false // forceUpdate
     );
 
-    expect(result).toMatchObject({ updated: false, reason: "keep_healthy_higher_priority" });
+    expect(result).toMatchObject({ updated: false, reason: "keep_cache_stickiness" });
   });
 
   it("forceUpdate=true short-circuits before consulting provider/circuit state", async () => {
