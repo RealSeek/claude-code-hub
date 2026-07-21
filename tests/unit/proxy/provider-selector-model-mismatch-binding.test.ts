@@ -127,7 +127,7 @@ describe("findReusable - model mismatch clears stale binding", () => {
     );
   });
 
-  test("should clear binding when the provider is in smart cooldown", async () => {
+  test("should skip reuse but keep binding when the provider is in smart cooldown", async () => {
     const { ProxyProviderResolver } = await import("@/app/v1/_lib/proxy/provider-selector");
     sessionManagerMocks.SessionManager.getSessionProvider.mockResolvedValueOnce(94);
     providerRepositoryMocks.findProviderById.mockResolvedValueOnce(createOpusProvider());
@@ -143,9 +143,9 @@ describe("findReusable - model mismatch clears stale binding", () => {
     const result = await (ProxyProviderResolver as any).findReusable(session);
 
     expect(result).toBeNull();
-    expect(sessionManagerMocks.SessionManager.clearSessionProvider).toHaveBeenCalledWith(
-      "sess_smart_cooldown"
-    );
+    // Keep binding so the session returns to the same provider after cooldown,
+    // preserving prompt cache stickiness.
+    expect(sessionManagerMocks.SessionManager.clearSessionProvider).not.toHaveBeenCalled();
   });
 
   test("should clear binding when bound provider disables session reuse", async () => {

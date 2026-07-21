@@ -116,7 +116,7 @@ describe("SessionManager.updateSessionBindingSmart forceUpdate", () => {
     expect(lastPipeline.exec).toHaveBeenCalledTimes(1);
   });
 
-  it("forceUpdate=false keeps the healthy higher-priority binding (documents the gap)", async () => {
+  it("forceUpdate=false keeps existing binding for cache stickiness even if lower priority", async () => {
     redisClientRef!.get.mockResolvedValue("1");
     vi.mocked(findProviderById).mockResolvedValue({ id: 1, name: "main", priority: 5 } as never);
     vi.mocked(isCircuitOpen).mockResolvedValue(false);
@@ -124,14 +124,14 @@ describe("SessionManager.updateSessionBindingSmart forceUpdate", () => {
     const result = await SessionManager.updateSessionBindingSmart(
       SID,
       2,
-      10,
+      1, // higher priority number-wise (smaller = higher) still must not steal binding
       false,
       false,
       null,
       false // forceUpdate
     );
 
-    expect(result).toMatchObject({ updated: false, reason: "keep_healthy_higher_priority" });
+    expect(result).toMatchObject({ updated: false, reason: "keep_cache_stickiness" });
   });
 
   it("forceUpdate=true short-circuits before consulting provider/circuit state", async () => {

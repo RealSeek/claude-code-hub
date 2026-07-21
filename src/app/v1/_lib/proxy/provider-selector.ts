@@ -587,13 +587,13 @@ export class ProxyProviderResolver {
 
     await hydrateSmartProviderStates([provider.id]);
 
-    // Session 粘滞不能绕过智能冷却；冷却优先级高于复用。
+    // Session 粘滞不能绕过智能冷却；冷却期间跳过复用，但保留绑定。
+    // 清绑定会在冷却结束后把会话打散到其它供应商，直接打断 prompt cache。
     if (isSmartProviderCooled(provider.id)) {
       logger.debug("ProviderSelector: Session provider is in smart cooldown", {
         sessionId: session.sessionId,
         providerId: provider.id,
       });
-      await SessionManager.clearSessionProvider(session.sessionId);
       return null;
     }
 

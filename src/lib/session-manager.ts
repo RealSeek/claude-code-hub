@@ -918,38 +918,9 @@ export class SessionManager {
 
       const currentPriority = currentProvider.priority || 0;
 
-      // 2.3 智能决策：优先级比较 + 健康检查
-
-      // ========== 规则 A：新供应商优先级更高（数字更小）→ 直接迁移 ==========
-      if (newProviderPriority < currentPriority) {
-        const pipeline = redis.pipeline();
-        pipeline.setex(
-          `session:${sessionId}:provider`,
-          SessionManager.SESSION_TTL,
-          newProviderId.toString()
-        );
-        if (keyId != null) {
-          pipeline.setex(`session:${sessionId}:key`, SessionManager.SESSION_TTL, keyId.toString());
-        }
-        await pipeline.exec();
-
-        logger.info("SessionManager: Migrated to higher priority provider", {
-          sessionId,
-          oldProviderId: currentProviderId,
-          oldProviderName: currentProvider.name,
-          oldPriority: currentPriority,
-          newProviderId,
-          newPriority: newProviderPriority,
-        });
-
-        return {
-          updated: true,
-          reason: "priority_upgrade",
-          details: `优先级升级：从供应商 ${currentProvider.name} (priority=${currentPriority}) 迁移到 ${newProviderId} (priority=${newProviderPriority})`,
-        };
-      }
-
-      // ========== 规则 B：新供应商优先级相同或更低 → 检查原供应商健康状态 ==========
+      // 2.3 智能决策：缓存粘性优先 + 熔断接管
+      // 已绑定的供应商上有 prompt cache；主动因“更高优先级”迁移会打断缓存，
+      // 导致 cache hit 断崖。仅在原绑定不可用（熔断）时才改绑。
       const { isCircuitOpen } = await import("@/lib/circuit-breaker");
       const isCurrentCircuitOpen = await isCircuitOpen(currentProviderId);
 
@@ -982,8 +953,8 @@ export class SessionManager {
         };
       }
 
-      // 原供应商健康 + 优先级更高/相同 → 保持原绑定（尽量使用主供应商）
-      logger.debug("SessionManager: Keeping current provider (healthy and higher/equal priority)", {
+      // 原供应商仍可用 → 保持绑定（优先保 prompt cache 粘性）
+      logger.debug("SessionManager: Keeping current provider for cache stickiness", {
         sessionId,
         currentProviderId,
         currentProviderName: currentProvider.name,
@@ -994,8 +965,8 @@ export class SessionManager {
 
       return {
         updated: false,
-        reason: "keep_healthy_higher_priority",
-        details: `保持原供应商 ${currentProvider.name} (priority=${currentPriority}, 健康)，拒绝供应商 ${newProviderId} (priority=${newProviderPriority})`,
+        reason: "keep_cache_stickiness",
+        details: `保持原供应商 ${currentProvider.name} (priority=${currentPriority}) 以保留 prompt cache，拒绝供应商 ${newProviderId} (priority=${newProviderPriority})`,
       };
     } catch (error) {
       logger.error("SessionManager: Failed to update session binding", {
@@ -2324,47 +2295,54 @@ export class SessionManager {
     try {
       // 使用 prompt_cache_key 作为新的 Session ID（添加前缀以区分）
       const codexSessionId = `codex_${promptCacheKey}`;
+      // 同时钉住“当前请求 session”与 “codex_prompt_cache_key session”，
+      // 避免两者分裂导致后续请求走错供应商、打穿 prompt cache。
+      const sessionIdsToBind = Array.from(
+        new Set(
+          [codexSessionId, currentSessionId].filter(
+            (id): id is string => typeof id === "string" && id.length > 0
+          )
+        )
+      );
 
       // 检查是否已经存在绑定
       const existingProvider = await redis.get(`session:${codexSessionId}:provider`);
 
       if (existingProvider) {
-        // 已存在绑定，刷新 TTL
+        // 已存在绑定：刷新 TTL，并把当前 session 同步到同一 provider（若尚未钉住）
         const pipeline = redis.pipeline();
-        pipeline.expire(`session:${codexSessionId}:provider`, SessionManager.SESSION_TTL);
-        if (keyId != null) {
+        for (const sid of sessionIdsToBind) {
           pipeline.setex(
-            `session:${codexSessionId}:key`,
+            `session:${sid}:provider`,
             SessionManager.SESSION_TTL,
-            keyId.toString()
+            existingProvider
           );
+          if (keyId != null) {
+            pipeline.setex(`session:${sid}:key`, SessionManager.SESSION_TTL, keyId.toString());
+          }
         }
         await pipeline.exec();
         logger.debug("SessionManager: Refreshed Codex session TTL", {
           sessionId: codexSessionId,
+          currentSessionId,
           providerId: parseInt(existingProvider, 10),
         });
         return { sessionId: codexSessionId, updated: false };
       }
 
-      // 新建绑定
+      // 新建绑定：codex session + 当前 session 一并钉住成功 provider
       const pipeline = redis.pipeline();
-      pipeline.setex(
-        `session:${codexSessionId}:provider`,
-        SessionManager.SESSION_TTL,
-        providerId.toString()
-      );
-      if (keyId != null) {
-        pipeline.setex(
-          `session:${codexSessionId}:key`,
-          SessionManager.SESSION_TTL,
-          keyId.toString()
-        );
+      for (const sid of sessionIdsToBind) {
+        pipeline.setex(`session:${sid}:provider`, SessionManager.SESSION_TTL, providerId.toString());
+        if (keyId != null) {
+          pipeline.setex(`session:${sid}:key`, SessionManager.SESSION_TTL, keyId.toString());
+        }
       }
       await pipeline.exec();
 
       logger.info("SessionManager: Created Codex session from prompt_cache_key", {
         sessionId: codexSessionId,
+        currentSessionId,
         promptCacheKey,
         providerId,
         ttl: SessionManager.SESSION_TTL,

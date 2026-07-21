@@ -1920,7 +1920,7 @@ export class ProxyForwarder {
               totalProvidersAttempted,
             });
 
-            await ProxyForwarder.clearSessionProviderBinding(session);
+            // 客户端中断保留 session 绑定，避免下一次请求换供应商打断 prompt cache。
 
             // 记录到决策链（标记为客户端中断）
             session.addProviderToChain(currentProvider, {
