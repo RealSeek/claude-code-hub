@@ -52,6 +52,8 @@ import type { GeminiResponse } from "../gemini/types";
 import { extractActualResponseModelForProvider } from "./actual-response-model";
 import { bindClientAbortListener } from "./client-abort-listener";
 import { isClientAbortError, isTransportError } from "./errors";
+import { emitStreamError } from "./fake-streaming/emitters";
+import type { ProtocolFamily } from "./fake-streaming/response-validator";
 import type { ProxySession } from "./session";
 import {
   consumeDeferredStreamingFinalization,
@@ -64,6 +66,85 @@ const STREAM_STATS_HEAD_BYTES = 1024 * 1024;
 const STREAM_STATS_TAIL_BYTES = STREAM_STATS_MAX_BUFFER_BYTES - STREAM_STATS_HEAD_BYTES;
 const STREAM_STATS_TAIL_CHUNKS = 8192;
 const STREAM_STATS_TRUNCATED_MARKER = "\n\n: [cch_truncated]\n\n";
+const STREAM_UPSTREAM_ERROR_MESSAGE = "The upstream response stream ended unexpectedly.";
+
+function buildClientStreamErrorFrame(format: ProxySession["originalFormat"]): Uint8Array | null {
+  const family: ProtocolFamily | null = (() => {
+    switch (format) {
+      case "claude":
+        return "anthropic";
+      case "openai":
+        return "openai-chat";
+      case "response":
+        return "openai-responses";
+      case "gemini":
+      case "gemini-cli":
+        return "gemini";
+      default:
+        return null;
+    }
+  })();
+
+  if (!family) return null;
+  return new TextEncoder().encode(
+    emitStreamError({
+      family,
+      errorCode: "upstream_stream_error",
+      errorMessage: STREAM_UPSTREAM_ERROR_MESSAGE,
+    })
+  );
+}
+
+export function recoverClientSseStreamErrors(
+  source: ReadableStream<Uint8Array>,
+  format: ProxySession["originalFormat"]
+): ReadableStream<Uint8Array> {
+  const reader = source.getReader();
+  let settled = false;
+
+  const releaseReader = () => {
+    if (settled) return;
+    settled = true;
+    try {
+      reader.releaseLock();
+    } catch {
+      // ignore
+    }
+  };
+
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read();
+        if (done) {
+          releaseReader();
+          controller.close();
+          return;
+        }
+        if (value) {
+          controller.enqueue(value);
+        }
+      } catch (error) {
+        const errorFrame = buildClientStreamErrorFrame(format);
+        releaseReader();
+        if (!errorFrame) {
+          controller.error(error);
+          return;
+        }
+        controller.enqueue(errorFrame);
+        controller.close();
+      }
+    },
+    async cancel(reason) {
+      if (settled) return;
+      try {
+        await reader.cancel(reason);
+      } finally {
+        releaseReader();
+      }
+    },
+  });
+}
 
 type BoundedStreamTextSnapshot = {
   text: string;
@@ -2634,7 +2715,10 @@ export class ProxyResponseHandler {
       })
     );
 
-    const [clientStream, internalStream] = controllableStream.tee();
+    const [rawClientStream, internalStream] = controllableStream.tee();
+    const clientStream = response.headers.get("content-type")?.includes("text/event-stream")
+      ? recoverClientSseStreamErrors(rawClientStream, session.originalFormat)
+      : rawClientStream;
     const statusCode = response.status;
 
     // 使用 AsyncTaskManager 管理后台处理任务
