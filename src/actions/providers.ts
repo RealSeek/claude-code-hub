@@ -227,6 +227,7 @@ const STICKY_SESSION_INVALIDATING_PROVIDER_KEYS = new Set<string>([
   "modelRedirects",
   "activeTimeStart",
   "activeTimeEnd",
+  "isPinned",
 ]);
 
 function shouldInvalidateStickySessionsOnProviderEdit(
@@ -358,6 +359,7 @@ export async function getProviders(): Promise<ProviderDisplay[]> {
         providerVendorId: provider.providerVendorId,
         preserveClientIp: provider.preserveClientIp,
         disableSessionReuse: provider.disableSessionReuse,
+        isPinned: provider.isPinned,
         modelRedirects: provider.modelRedirects,
         activeTimeStart: provider.activeTimeStart,
         activeTimeEnd: provider.activeTimeEnd,
@@ -608,6 +610,7 @@ export async function addProvider(data: {
   provider_type?: ProviderType;
   preserve_client_ip?: boolean;
   disable_session_reuse?: boolean;
+  is_pinned?: boolean;
   model_redirects?: ProviderModelRedirectRule[] | null;
   active_time_start?: string | null;
   active_time_end?: string | null;
@@ -883,6 +886,7 @@ export async function editProvider(
     provider_type?: ProviderType;
     preserve_client_ip?: boolean;
     disable_session_reuse?: boolean;
+    is_pinned?: boolean;
     model_redirects?: ProviderModelRedirectRule[] | null;
     active_time_start?: string | null;
     active_time_end?: string | null;
@@ -1692,6 +1696,7 @@ const SINGLE_EDIT_PREIMAGE_FIELD_TO_PROVIDER_KEY: Record<string, keyof Provider>
   provider_type: "providerType",
   preserve_client_ip: "preserveClientIp",
   disable_session_reuse: "disableSessionReuse",
+  is_pinned: "isPinned",
   active_time_start: "activeTimeStart",
   active_time_end: "activeTimeEnd",
   model_redirects: "modelRedirects",

@@ -1478,13 +1478,19 @@ export class ProxyProviderResolver {
 
     // Step 3: Candidate providers (group filter done in Step 1)
     // 冷却状态优先于健康度和权重排序；全部冷却时只放行最早恢复的一个兜底候选。
-    const smartCandidates = filterSmartCooldown(enabledProviders, Date.now(), (a, b) => {
+    const pinnedProviders = enabledProviders.filter((provider) => provider.isPinned);
+    const regularProviders = enabledProviders.filter((provider) => !provider.isPinned);
+    const regularSmartCandidates = filterSmartCooldown(regularProviders, Date.now(), (a, b) => {
       const priorityDiff =
-        smartProviderEffectivePriority(b, enabledProviders, undefined, effectiveGroupPick) -
-        smartProviderEffectivePriority(a, enabledProviders, undefined, effectiveGroupPick);
+        smartProviderEffectivePriority(b, regularProviders, undefined, effectiveGroupPick) -
+        smartProviderEffectivePriority(a, regularProviders, undefined, effectiveGroupPick);
       if (priorityDiff !== 0) return priorityDiff;
       return (b.priority ?? 0) - (a.priority ?? 0);
     });
+    const smartCandidates =
+      pinnedProviders.length > 0
+        ? [...pinnedProviders, ...regularSmartCandidates]
+        : regularSmartCandidates;
     let candidateProviders = smartCandidates;
     let healthCheckedProviders = smartCandidates;
     context.afterGroupFilter = enabledProviders.length;
@@ -1496,6 +1502,7 @@ export class ProxyProviderResolver {
     // 此时按恢复时间继续探查其余冷却候选，避免单个失效兜底候选导致错误 503。
     if (
       healthEligibleProviders.length === 0 &&
+      pinnedProviders.length === 0 &&
       smartCandidates.length < enabledProviders.length &&
       enabledProviders.every((provider) => isSmartProviderCooled(provider.id))
     ) {
@@ -1580,21 +1587,27 @@ export class ProxyProviderResolver {
     // Key 级冷却必须先于 Provider 优先级选择：只要仍有一个健康 Provider 存在 ready Key，
     // 普通请求就不能落到全 Key 冷却的 Provider。只有全部健康候选都冷却时才显式兜底。
     const dispatchNow = Date.now();
-    let readyKeyCounts = await resolveReadyKeyCounts(healthyProviders, dispatchNow);
-    const readyKeyProviders = healthyProviders.filter(
+    const healthyPinnedProviders = healthyProviders.filter((provider) => provider.isPinned);
+    const selectionProviders =
+      healthyPinnedProviders.length > 0 ? healthyPinnedProviders : healthyProviders;
+    let readyKeyCounts = await resolveReadyKeyCounts(selectionProviders, dispatchNow);
+    const readyKeyProviders = selectionProviders.filter(
       (provider) => (readyKeyCounts.get(provider.id) ?? 0) > 0
     );
     let keySelectableProviders = readyKeyProviders;
     if (readyKeyProviders.length === 0) {
       // Provider 冷却与 Key 冷却必须合并比较恢复时间；否则可能错过更早恢复的供应商。
-      const additionalCooledProviders = enabledProviders.filter(
-        (provider) =>
-          isSmartProviderCooled(provider.id, dispatchNow) &&
-          !healthyProviders.some((healthy) => healthy.id === provider.id)
-      );
+      const additionalCooledProviders =
+        healthyPinnedProviders.length > 0
+          ? []
+          : enabledProviders.filter(
+              (provider) =>
+                isSmartProviderCooled(provider.id, dispatchNow) &&
+                !healthyProviders.some((healthy) => healthy.id === provider.id)
+            );
       const additionalHealthyProviders =
         await ProxyProviderResolver.filterByLimits(additionalCooledProviders);
-      const fallbackPool = [...healthyProviders, ...additionalHealthyProviders].filter(
+      const fallbackPool = [...selectionProviders, ...additionalHealthyProviders].filter(
         (provider, index, providers) =>
           providers.findIndex((candidate) => candidate.id === provider.id) === index
       );
@@ -1820,9 +1833,11 @@ export class ProxyProviderResolver {
       return [];
     }
 
-    const scores = providers.map((provider) => ({
+    const pinnedProviders = providers.filter((provider) => provider.isPinned);
+    const priorityPool = pinnedProviders.length > 0 ? pinnedProviders : providers;
+    const scores = priorityPool.map((provider) => ({
       provider,
-      score: smartProviderEffectivePriority(provider, providers, undefined, userGroup ?? null),
+      score: smartProviderEffectivePriority(provider, priorityPool, undefined, userGroup ?? null),
     }));
     const bestScore = Math.max(...scores.map((item) => item.score));
     return scores
@@ -1916,19 +1931,26 @@ export class ProxyProviderResolver {
     await hydrateSmartProviderStates(typeFiltered.map((provider) => provider.id));
 
     // 冷却状态必须先于健康度检查，全部冷却时保留最早恢复的兜底候选。
-    const smartCandidates = filterSmartCooldown(typeFiltered, Date.now(), (a, b) => {
+    const pinnedProviders = typeFiltered.filter((provider) => provider.isPinned);
+    const regularProviders = typeFiltered.filter((provider) => !provider.isPinned);
+    const regularSmartCandidates = filterSmartCooldown(regularProviders, Date.now(), (a, b) => {
       const priorityDiff =
-        smartProviderEffectivePriority(b, typeFiltered, undefined, effectiveGroupPick) -
-        smartProviderEffectivePriority(a, typeFiltered, undefined, effectiveGroupPick);
+        smartProviderEffectivePriority(b, regularProviders, undefined, effectiveGroupPick) -
+        smartProviderEffectivePriority(a, regularProviders, undefined, effectiveGroupPick);
       if (priorityDiff !== 0) return priorityDiff;
       return (b.priority ?? 0) - (a.priority ?? 0);
     });
+    const smartCandidates =
+      pinnedProviders.length > 0
+        ? [...pinnedProviders, ...regularSmartCandidates]
+        : regularSmartCandidates;
 
     // 健康度检查（熔断器 + 费用限制）
     let candidateProviders = smartCandidates;
     let healthEligibleProviders = await ProxyProviderResolver.filterByLimits(candidateProviders);
     if (
       healthEligibleProviders.length === 0 &&
+      pinnedProviders.length === 0 &&
       smartCandidates.length < typeFiltered.length &&
       typeFiltered.every((provider) => isSmartProviderCooled(provider.id))
     ) {
@@ -1992,20 +2014,26 @@ export class ProxyProviderResolver {
     }
 
     const dispatchNow = Date.now();
-    let readyKeyCounts = await resolveReadyKeyCounts(healthyProviders, dispatchNow);
-    const readyKeyProviders = healthyProviders.filter(
+    const healthyPinnedProviders = healthyProviders.filter((provider) => provider.isPinned);
+    const selectionProviders =
+      healthyPinnedProviders.length > 0 ? healthyPinnedProviders : healthyProviders;
+    let readyKeyCounts = await resolveReadyKeyCounts(selectionProviders, dispatchNow);
+    const readyKeyProviders = selectionProviders.filter(
       (provider) => (readyKeyCounts.get(provider.id) ?? 0) > 0
     );
     let keySelectableProviders = readyKeyProviders;
     if (readyKeyProviders.length === 0) {
-      const additionalCooledProviders = typeFiltered.filter(
-        (provider) =>
-          isSmartProviderCooled(provider.id, dispatchNow) &&
-          !healthyProviders.some((healthy) => healthy.id === provider.id)
-      );
+      const additionalCooledProviders =
+        healthyPinnedProviders.length > 0
+          ? []
+          : typeFiltered.filter(
+              (provider) =>
+                isSmartProviderCooled(provider.id, dispatchNow) &&
+                !healthyProviders.some((healthy) => healthy.id === provider.id)
+            );
       const additionalHealthyProviders =
         await ProxyProviderResolver.filterByLimits(additionalCooledProviders);
-      const fallbackPool = [...healthyProviders, ...additionalHealthyProviders].filter(
+      const fallbackPool = [...selectionProviders, ...additionalHealthyProviders].filter(
         (provider, index, providers) =>
           providers.findIndex((candidate) => candidate.id === provider.id) === index
       );

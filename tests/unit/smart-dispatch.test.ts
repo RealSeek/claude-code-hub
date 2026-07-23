@@ -55,6 +55,7 @@ function provider(id: number, priority = 1, weight = 1): Provider {
     providerType: "claude",
     preserveClientIp: false,
     disableSessionReuse: false,
+    isPinned: false,
     modelRedirects: null,
     activeTimeStart: null,
     activeTimeEnd: null,
@@ -131,6 +132,31 @@ describe("smart dispatch", () => {
     const picks = Array.from({ length: 4 }, () => selectSmartProvider(providers, null, weights).id);
 
     expect(picks).toEqual([1, 1, 2, 1]);
+  });
+
+  it("置顶供应商优先于成本、人工优先级和智能健康分", () => {
+    vi.stubEnv("SMART_DISPATCH_HEALTH_SCORE_ENABLED", "true");
+    vi.stubEnv("SMART_DISPATCH_MIN_CONFIDENT_SAMPLE", "1");
+    const pinned = provider(1, 99, 1);
+    pinned.isPinned = true;
+    pinned.costMultiplier = 9;
+    const regular = provider(2, 0, 100);
+    regular.costMultiplier = 0.1;
+    recordSmartProviderFailure(pinned.id);
+    recordSmartProviderSuccess(regular.id, 10);
+
+    expect(selectSmartProvider([regular, pinned], null).id).toBe(pinned.id);
+  });
+
+  it("关闭智能调度时仍然优先尝试置顶供应商", () => {
+    vi.stubEnv("SMART_DISPATCH_ENABLED", "false");
+    const pinned = provider(1, 99, 1);
+    pinned.isPinned = true;
+    pinned.costMultiplier = 9;
+    const regular = provider(2, 0, 100);
+    regular.costMultiplier = 0.1;
+
+    expect(selectSmartProvider([regular, pinned], null).id).toBe(pinned.id);
   });
 
   it("保留人工配置权重，并为全 Key 冷却兜底保留最小容量", () => {

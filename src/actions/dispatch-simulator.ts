@@ -126,14 +126,28 @@ async function filterByDispatchCooldown(
 }> {
   if (providers.length === 0) return { providers: [], filteredOut: [] };
 
+  const pinnedProviders = providers.filter((provider) => provider.isPinned);
+  const dispatchProviders = pinnedProviders.length > 0 ? pinnedProviders : providers;
+  const bypassedByPin =
+    pinnedProviders.length > 0
+      ? providers
+          .filter((provider) => !provider.isPinned)
+          .map((provider) =>
+            buildProviderSnapshot(provider, userGroup, {
+              details: "pinned_provider_precedes_smart_dispatch",
+            })
+          )
+      : [];
+
   await refreshSmartDispatchConfig();
-  await hydrateSmartProviderStates(providers.map((provider) => provider.id));
+  await hydrateSmartProviderStates(dispatchProviders.map((provider) => provider.id));
   const smartEnabled = getSmartDispatchConfig().enabled;
   const availability = await Promise.all(
-    providers.map(async (provider) => ({
+    dispatchProviders.map(async (provider) => ({
       provider,
       readyKeyCount: await readyProviderApiKeyCount(provider, now),
-      providerCooled: smartEnabled && isSmartProviderCooled(provider.id, now),
+      providerCooled:
+        pinnedProviders.length === 0 && smartEnabled && isSmartProviderCooled(provider.id, now),
     }))
   );
   const available = availability.filter((item) => !item.providerCooled && item.readyKeyCount > 0);
@@ -141,14 +155,17 @@ async function filterByDispatchCooldown(
     const availableIds = new Set(available.map((item) => item.provider.id));
     return {
       providers: available.map((item) => item.provider),
-      filteredOut: availability
-        .filter((item) => !availableIds.has(item.provider.id))
-        .map((item) =>
-          buildProviderSnapshot(item.provider, userGroup, {
-            readyKeyCount: item.readyKeyCount,
-            details: item.providerCooled ? "provider_smart_cooldown" : "all_provider_keys_cooled",
-          })
-        ),
+      filteredOut: [
+        ...bypassedByPin,
+        ...availability
+          .filter((item) => !availableIds.has(item.provider.id))
+          .map((item) =>
+            buildProviderSnapshot(item.provider, userGroup, {
+              readyKeyCount: item.readyKeyCount,
+              details: item.providerCooled ? "provider_smart_cooldown" : "all_provider_keys_cooled",
+            })
+          ),
+      ],
     };
   }
 
@@ -165,20 +182,23 @@ async function filterByDispatchCooldown(
     const readyDiff = a.readyAt - b.readyAt;
     if (readyDiff !== 0) return readyDiff;
     const priorityDiff =
-      smartProviderEffectivePriority(b.provider, providers, undefined, userGroup) -
-      smartProviderEffectivePriority(a.provider, providers, undefined, userGroup);
+      smartProviderEffectivePriority(b.provider, dispatchProviders, undefined, userGroup) -
+      smartProviderEffectivePriority(a.provider, dispatchProviders, undefined, userGroup);
     if (priorityDiff !== 0) return priorityDiff;
     return a.provider.id - b.provider.id;
   });
   const selected = fallbackCandidates[0];
   return {
     providers: selected ? [selected.provider] : [],
-    filteredOut: fallbackCandidates.slice(1).map((item) =>
-      buildProviderSnapshot(item.provider, userGroup, {
-        readyKeyCount: item.readyKeyCount,
-        details: "cooldown_fallback_later_recovery",
-      })
-    ),
+    filteredOut: [
+      ...bypassedByPin,
+      ...fallbackCandidates.slice(1).map((item) =>
+        buildProviderSnapshot(item.provider, userGroup, {
+          readyKeyCount: item.readyKeyCount,
+          details: "cooldown_fallback_later_recovery",
+        })
+      ),
+    ],
   };
 }
 
