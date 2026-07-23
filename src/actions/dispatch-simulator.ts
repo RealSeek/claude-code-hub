@@ -328,7 +328,8 @@ export async function simulateDispatchDecisionTree(
 
   const enabledProviders = currentProviders.filter(
     (provider) =>
-      provider.isEnabled && isProviderWithinGroupBillingPolicy(provider, groupBillingPolicy)
+      provider.isEnabled &&
+      (provider.isPinned || isProviderWithinGroupBillingPolicy(provider, groupBillingPolicy))
   );
   steps.push(
     buildStep(

@@ -1175,7 +1175,7 @@ export class ProxyProviderResolver {
       }
     }
 
-    if (!isProviderWithinGroupBillingPolicy(provider, groupBillingPolicy)) {
+    if (!provider.isPinned && !isProviderWithinGroupBillingPolicy(provider, groupBillingPolicy)) {
       logger.warn("ProviderSelector: Session provider exceeds group upstream multiplier limit", {
         sessionId: session.sessionId,
         providerId: provider.id,
@@ -1381,7 +1381,7 @@ export class ProxyProviderResolver {
         return false;
       }
 
-      if (!isProviderWithinGroupBillingPolicy(provider, groupBillingPolicy)) {
+      if (!provider.isPinned && !isProviderWithinGroupBillingPolicy(provider, groupBillingPolicy)) {
         return false;
       }
 
@@ -1439,7 +1439,7 @@ export class ProxyProviderResolver {
         } else if (excludeIds.includes(p.id)) {
           reason = "excluded";
           details = "已在前序尝试中失败";
-        } else if (!isProviderWithinGroupBillingPolicy(p, groupBillingPolicy)) {
+        } else if (!p.isPinned && !isProviderWithinGroupBillingPolicy(p, groupBillingPolicy)) {
           reason = "group_cost_multiplier_exceeded";
           details = `上游倍率 ${p.costMultiplier} 已达到分组上限 ${groupBillingPolicy?.maxUpstreamMultiplier}`;
         } else if (!isProviderActiveNow(p.activeTimeStart, p.activeTimeEnd, systemTimezone)) {

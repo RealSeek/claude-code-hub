@@ -82,6 +82,17 @@ describe("ProxyProviderResolver pinned provider", () => {
     expect(hasPinnedCandidate).toBe(false);
   });
 
+  it("allows a pinned provider above the group upstream multiplier limit", async () => {
+    const { ProxyProviderResolver } = await import("@/app/v1/_lib/proxy/provider-selector");
+    const pinned = provider(2, { isPinned: true, costMultiplier: 1 });
+
+    const hasPinnedCandidate = await (ProxyProviderResolver as any).hasPinnedCandidate(
+      session([pinned])
+    );
+
+    expect(hasPinnedCandidate).toBe(true);
+  });
+
   it("tries the pinned provider before smart dispatch even while it is in smart cooldown", async () => {
     const { ProxyProviderResolver } = await import("@/app/v1/_lib/proxy/provider-selector");
     vi.spyOn(ProxyProviderResolver as any, "filterByLimits").mockImplementation(
@@ -100,6 +111,28 @@ describe("ProxyProviderResolver pinned provider", () => {
     expect(result.context.candidatesAtPriority.map((item: { id: number }) => item.id)).toEqual([
       pinned.id,
     ]);
+  });
+
+  it("keeps a pinned provider in the candidate pool above the group upstream multiplier limit", async () => {
+    const { ProxyProviderResolver } = await import("@/app/v1/_lib/proxy/provider-selector");
+    vi.spyOn(ProxyProviderResolver as any, "filterByLimits").mockImplementation(
+      async (providers: Provider[]) => providers
+    );
+    const regular = provider(1, { priority: 0, costMultiplier: 0.01 });
+    const pinned = provider(2, { priority: 99, isPinned: true, costMultiplier: 1 });
+    const policy = {
+      groupName: "testing",
+      costMultiplier: 1,
+      maxUpstreamMultiplier: 0.08,
+    };
+
+    const result = await (ProxyProviderResolver as any).pickRandomProvider(
+      session([regular, pinned]),
+      [],
+      policy
+    );
+
+    expect(result.provider.id).toBe(pinned.id);
   });
 
   it("returns to normal smart dispatch after the pinned provider is excluded by a failed attempt", async () => {
