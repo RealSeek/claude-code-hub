@@ -69,6 +69,8 @@ next-env.d.ts
 /dev/.env
 /dev/.env.*
 !/dev/.env.example
+/dev/portable-postgres/
+/dev/provider-ttfb-preview.html
 
 # translation checklists and temporary docs
 TRANSLATIONS_CHECKLIST.txt

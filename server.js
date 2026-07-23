@@ -61,6 +61,39 @@ const RESERVED_INTERNAL_HEADER_PREFIX = "x-cch-";
 const MAX_PENDING_FRAMES = 64;
 const MAX_PENDING_BYTES = 64 * 1024 * 1024; // 64 MiB across all queued frames
 
+// Keep idle upstream proxy connections alive longer than common HTTP client
+// pools (Go defaults to 90s). Node's 5s default creates a reuse race where a
+// client can select a socket while the server is closing it and receive RST.
+const DEFAULT_HTTP_KEEP_ALIVE_TIMEOUT_MS = 120_000;
+const DEFAULT_HTTP_KEEP_ALIVE_TIMEOUT_BUFFER_MS = 5_000;
+
+function parsePositiveInt(raw, fallback) {
+  const value = Number(raw);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function configureHttpServerTimeouts(server, env = process.env) {
+  const keepAliveTimeout = parsePositiveInt(
+    env.HTTP_KEEP_ALIVE_TIMEOUT_MS,
+    DEFAULT_HTTP_KEEP_ALIVE_TIMEOUT_MS
+  );
+  const keepAliveTimeoutBuffer = parsePositiveInt(
+    env.HTTP_KEEP_ALIVE_TIMEOUT_BUFFER_MS,
+    DEFAULT_HTTP_KEEP_ALIVE_TIMEOUT_BUFFER_MS
+  );
+  const minimumHeadersTimeout = keepAliveTimeout + keepAliveTimeoutBuffer + 1_000;
+  const headersTimeout = Math.max(
+    parsePositiveInt(env.HTTP_HEADERS_TIMEOUT_MS, minimumHeadersTimeout),
+    minimumHeadersTimeout
+  );
+
+  server.keepAliveTimeout = keepAliveTimeout;
+  server.headersTimeout = headersTimeout;
+  if ("keepAliveTimeoutBuffer" in server) {
+    server.keepAliveTimeoutBuffer = keepAliveTimeoutBuffer;
+  }
+}
+
 // Maximum payload size for any single inbound WS frame. The default `ws`
 // limit is 100 MiB. We pick 32 MiB to accommodate Codex requests that ship
 // large conversation history alongside the prompt — a tighter cap caused the
@@ -692,6 +725,7 @@ async function main() {
       }
     }
   });
+  configureHttpServerTimeouts(server);
 
   let wss = null;
   if (WebSocketServer) {
@@ -862,6 +896,7 @@ module.exports = {
   handleWebSocketConnection,
   forwardToInternalHttp,
   registerOrchestratedShutdown,
+  configureHttpServerTimeouts,
   WS_MAX_PAYLOAD_BYTES,
   MAX_PENDING_BYTES,
 };
