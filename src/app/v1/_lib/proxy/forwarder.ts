@@ -412,6 +412,7 @@ type StreamingHedgeAttempt = {
   thresholdTriggered: boolean;
   thresholdTimer: NodeJS.Timeout | null;
   reader: ReadableStreamDefaultReader<Uint8Array> | null;
+  preflightController: AbortController;
   response: Response | null;
   releaseAgent: (() => void) | null;
   agentReleased: boolean;
@@ -501,6 +502,37 @@ type ProxySessionWithDetailSnapshotRuntime = ProxySession & {
 // - 该检查仅用于“空响应/假 200”启发式判定，不用于业务逻辑解析；
 // - 超过上限时，仍认为“非空”，但会跳过 JSON 内容结构检查（避免截断导致误判）。
 const NON_STREAM_BODY_INSPECTION_MAX_BYTES = 32 * 1024; // 32 KiB
+const STREAMING_PREFLIGHT_MAX_BYTES = 32 * 1024; // 32 KiB
+
+function findFirstCompleteSseDataEvent(text: string): string | null {
+  let eventStart = 0;
+  let lineStart = 0;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text.charCodeAt(index);
+    if (char !== 10 && char !== 13) continue;
+
+    const lineEnd = index;
+    if (char === 13 && text.charCodeAt(index + 1) === 10) {
+      index += 1;
+    }
+    const nextLineStart = index + 1;
+    if (lineEnd !== lineStart) {
+      lineStart = nextLineStart;
+      continue;
+    }
+
+    const eventText = text.slice(eventStart, lineStart);
+    eventStart = nextLineStart;
+    lineStart = nextLineStart;
+
+    if (/(?:^|[\r\n])data:/.test(eventText.replace(/^\uFEFF/, ""))) {
+      return eventText;
+    }
+  }
+
+  return null;
+}
 
 /**
  * 读取响应体文本，但最多读取 `maxBytes` 字节（用于非流式 2xx 的“空响应/假 200”嗅探）。
@@ -1798,8 +1830,8 @@ export class ProxyForwarder {
           // - 熔断/故障转移统计被误记为成功；
           // - 客户端下一次自动重试可能仍复用到同一 provider，导致“假 200”让重试失效。
           //
-          // 解决：Forwarder 只负责尽快把 Response 返回给下游开始透传，
-          // 把最终成功/失败结算延迟到 ResponseHandler：等 SSE 正常结束后再基于最终 body 补充检查并更新内部状态。
+          // 解决：Forwarder 在提交 Response 前检查首个有效事件；首事件正常后立即透传，
+          // 最终成功/失败仍由 ResponseHandler 在 SSE 结束后基于完整 body 补充检查并更新内部状态。
           if (isSSE) {
             // ========== F1 流式内容门控（enforce 或 Replay owner）==========
             // 在向客户端提交响应前等待首个有效内容帧：
@@ -4694,6 +4726,17 @@ export class ProxyForwarder {
       }
     };
 
+    const resetAttemptResponseRuntime = (attempt: StreamingHedgeAttempt) => {
+      attempt.responseController = null;
+      attempt.clearResponseTimeout = null;
+      attempt.response = null;
+      attempt.reader = null;
+      attempt.preflightController = new AbortController();
+      attempt.releaseAgent = null;
+      attempt.agentReleased = false;
+      attempt.firstChunk = null;
+    };
+
     // 后台 drain 一个落败供应商的响应体以拿回 token 用量并计费。
     // 不取消连接：读到流自然结束（或超时/容量上限）后，复用赢家相同的计费链，
     // 把费用异步累加回原请求行。幂等（loserBillingStarted 守卫），失败静默。
@@ -4815,9 +4858,9 @@ export class ProxyForwarder {
       attempts.delete(attempt);
       session.removeLiveActiveProvider(attempt.provider.id);
 
-      // 竞速输家计费开启：仅标记 + 记录决策链，不取消连接、不释放 agent。
+      // 竞速输家计费开启：已完成 preflight 的响应保留连接并后台 drain。
       // 实际的后台 drain 由 runAttempt 的 .then 流程发起（它独占 reader，避免并发读）。
-      if (reason === "hedge_loser" && attempt.billAsLoser) {
+      if (reason === "hedge_loser" && attempt.billAsLoser && attempt.firstChunk) {
         session.addProviderToChain(attempt.provider, {
           ...attempt.endpointAudit,
           reason: "hedge_loser_billed",
@@ -4826,7 +4869,13 @@ export class ProxyForwarder {
           modelRedirect: getAttemptModelRedirect(attempt),
         });
         ProxyForwarder.markProviderFailed(session, failedProviderIds, attempt.provider.id);
+        startLoserBilling(attempt);
         return;
+      }
+
+      // 尚未形成完整首事件的流无法安全交给 loser billing；继续保活会让 preflight 永久占用 reader。
+      if (reason === "hedge_loser" && attempt.billAsLoser) {
+        attempt.billAsLoser = false;
       }
 
       // 因非竞速原因（client_abort / launch_failed 等）被取消：禁止后台计费，正常取消连接。
@@ -4842,6 +4891,7 @@ export class ProxyForwarder {
         ProxyForwarder.markProviderFailed(session, failedProviderIds, attempt.provider.id);
       }
       try {
+        attempt.preflightController.abort(new Error(reason));
         attempt.responseController?.abort(new Error(reason));
       } catch (abortError) {
         logger.debug("ProxyForwarder: hedge attempt abort failed", {
@@ -5098,6 +5148,9 @@ export class ProxyForwarder {
               firstChunkError instanceof Error
                 ? firstChunkError
                 : new Error(String(firstChunkError));
+            if (!attempt.settled) {
+              releaseAttemptAgent(attempt);
+            }
             // 不提前 return：handleAttemptFailure 的首个守卫会兜底清理“已结算的计费输家”
             // （否则赢家已提交时这里 return 会泄漏其 reader/agent）。
             await handleAttemptFailure(attempt, normalizedError);
@@ -5132,6 +5185,7 @@ export class ProxyForwarder {
       lastError = error;
 
       let errorCategory = await categorizeErrorAsync(error);
+      if (settled || winnerCommitted || attempt.settled) return;
       lastErrorCategory = errorCategory;
       // F3a：hedge attempt 供应商侧失败且正是亲和提名者 -> 定向墓碑
       if (
@@ -5158,6 +5212,7 @@ export class ProxyForwarder {
           );
         }
       }
+      if (settled || winnerCommitted || attempt.settled) return;
 
       if (errorCategory === ErrorCategory.CLIENT_ABORT) {
         attempt.settled = true;
@@ -5229,6 +5284,7 @@ export class ProxyForwarder {
         retryAttemptNumber: attempt.requestAttemptCount + 1,
         retryState: attempt.reactiveRectifierRetryState,
       });
+      if (settled || winnerCommitted || attempt.settled) return;
 
       if (reactiveRectifierResult.matched) {
         if (!reactiveRectifierResult.applied) {
@@ -5281,6 +5337,7 @@ export class ProxyForwarder {
             clearTimeout(attempt.thresholdTimer);
             attempt.thresholdTimer = null;
           }
+          resetAttemptResponseRuntime(attempt);
           attempt.requestAttemptCount += 1;
           armAttemptThreshold(attempt);
           runAttempt(attempt);
@@ -5290,6 +5347,7 @@ export class ProxyForwarder {
 
       if (errorCategory === ErrorCategory.NON_RETRYABLE_CLIENT_ERROR) {
         matchedRule = buildMatchedRuleDetails(await getErrorDetectionResultAsync(error));
+        if (settled || winnerCommitted || attempt.settled) return;
         matchedRuleLogContext = buildMatchedRuleLogContext(matchedRule);
 
         logger.warn("ProxyForwarder: Non-retryable client error in hedge, aborting all attempts", {
@@ -5320,6 +5378,7 @@ export class ProxyForwarder {
         providerKeyFailureAlreadyRecorded = true;
 
         const nextProvider = await selectProviderApiKey(failedProvider, attemptedKeyIds);
+        if (settled || winnerCommitted || attempt.settled) return;
         if (
           nextProvider.selectedApiKeyId != null &&
           !attemptedKeyIds.has(nextProvider.selectedApiKeyId)
@@ -5330,6 +5389,7 @@ export class ProxyForwarder {
             reason: "retry_failed",
             attemptNumber: attempt.sequence,
             statusCode,
+            statusCodeInferred,
             errorMessage,
             circuitState: getCircuitState(failedProvider.id),
             modelRedirect: getAttemptModelRedirect(attempt),
@@ -5342,13 +5402,7 @@ export class ProxyForwarder {
           attempt.provider = nextProvider;
           attempt.session.setProvider(nextProvider);
           attempt.requestAttemptCount += 1;
-          attempt.responseController = null;
-          attempt.clearResponseTimeout = null;
-          attempt.response = null;
-          attempt.reader = null;
-          attempt.releaseAgent = null;
-          attempt.agentReleased = false;
-          attempt.firstChunk = null;
+          resetAttemptResponseRuntime(attempt);
 
           logger.info("ProxyForwarder: Hedge participant rotating provider API key", {
             providerId: nextProvider.id,
@@ -5407,6 +5461,7 @@ export class ProxyForwarder {
                   : "retry_failed",
               attemptNumber: attempt.sequence,
               statusCode,
+              statusCodeInferred,
               errorMessage,
               circuitState: getCircuitState(attempt.provider.id),
               modelRedirect: getAttemptModelRedirect(attempt),
@@ -5670,6 +5725,7 @@ export class ProxyForwarder {
         thresholdTriggered: false,
         thresholdTimer: null,
         reader: null,
+        preflightController: new AbortController(),
         response: null,
         releaseAgent: null,
         agentReleased: false,
@@ -8306,10 +8362,37 @@ export class ProxyForwarder {
   }
 
   private static async readFirstReadableChunk(
-    reader: ReadableStreamDefaultReader<Uint8Array>
+    reader: ReadableStreamDefaultReader<Uint8Array>,
+    abortSignal?: AbortSignal
   ): Promise<ReadableStreamReadResult<Uint8Array>> {
     while (true) {
-      const result = await reader.read();
+      if (abortSignal?.aborted) {
+        throw abortSignal.reason ?? new Error("streaming_preflight_aborted");
+      }
+
+      const result = abortSignal
+        ? await new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
+            const onAbort = () => {
+              abortSignal.removeEventListener("abort", onAbort);
+              reject(abortSignal.reason ?? new Error("streaming_preflight_aborted"));
+            };
+            abortSignal.addEventListener("abort", onAbort, { once: true });
+            if (abortSignal.aborted) {
+              onAbort();
+              return;
+            }
+            reader.read().then(
+              (value) => {
+                abortSignal.removeEventListener("abort", onAbort);
+                resolve(value);
+              },
+              (error) => {
+                abortSignal.removeEventListener("abort", onAbort);
+                reject(error);
+              }
+            );
+          })
+        : await reader.read();
       if (result.done) {
         return result;
       }
