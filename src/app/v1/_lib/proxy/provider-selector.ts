@@ -243,10 +243,7 @@ export class ProxyProviderResolver {
     session.setGroupCostMultiplier(groupBillingPolicy?.costMultiplier ?? 1.0);
 
     // === 会话复用 ===
-    const pinnedOverride = await ProxyProviderResolver.hasPinnedCandidate(
-      session,
-      groupBillingPolicy
-    );
+    const pinnedOverride = await ProxyProviderResolver.hasPinnedCandidate(session);
     if (pinnedOverride && session.sessionId) {
       await SessionManager.clearSessionProvider(session.sessionId);
     }
@@ -563,8 +560,7 @@ export class ProxyProviderResolver {
    * 确保置顶不可用时仍能回退到普通智能调度候选。
    */
   private static async hasPinnedCandidate(
-    session: ProxySession,
-    groupBillingPolicy: GroupBillingPolicy | null
+    session: ProxySession
   ): Promise<boolean> {
     const providers = await session.getProvidersSnapshot();
     const effectiveGroup = getEffectiveProviderGroup(session);
@@ -577,7 +573,6 @@ export class ProxyProviderResolver {
       }
       if (effectiveGroup && !checkProviderGroupMatch(provider.groupTag, effectiveGroup))
         return false;
-      if (!isProviderWithinGroupBillingPolicy(provider, groupBillingPolicy)) return false;
       if (!isProviderActiveNow(provider.activeTimeStart, provider.activeTimeEnd, systemTimezone)) {
         return false;
       }
@@ -833,7 +828,7 @@ export class ProxyProviderResolver {
       }
     }
 
-    if (!isProviderWithinGroupBillingPolicy(provider, groupBillingPolicy)) {
+    if (!provider.isPinned && !isProviderWithinGroupBillingPolicy(provider, groupBillingPolicy)) {
       logger.warn("ProviderSelector: Session provider exceeds group upstream multiplier limit", {
         sessionId: session.sessionId,
         providerId: provider.id,
@@ -1039,7 +1034,7 @@ export class ProxyProviderResolver {
         return false;
       }
 
-      if (!isProviderWithinGroupBillingPolicy(provider, groupBillingPolicy)) {
+      if (!provider.isPinned && !isProviderWithinGroupBillingPolicy(provider, groupBillingPolicy)) {
         return false;
       }
 
@@ -1097,7 +1092,7 @@ export class ProxyProviderResolver {
         } else if (excludeIds.includes(p.id)) {
           reason = "excluded";
           details = "已在前序尝试中失败";
-        } else if (!isProviderWithinGroupBillingPolicy(p, groupBillingPolicy)) {
+        } else if (!p.isPinned && !isProviderWithinGroupBillingPolicy(p, groupBillingPolicy)) {
           reason = "group_cost_multiplier_exceeded";
           details = `上游倍率 ${p.costMultiplier} 已达到分组上限 ${groupBillingPolicy?.maxUpstreamMultiplier}`;
         } else if (!isProviderActiveNow(p.activeTimeStart, p.activeTimeEnd, systemTimezone)) {
