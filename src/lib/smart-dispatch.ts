@@ -458,6 +458,10 @@ export function selectSmartProvider(
 ): Provider {
   if (providers.length === 0) throw new Error("No providers available for selection");
   if (providers.length === 1) return providers[0];
+  const pinnedProviders = providers.filter((provider) => provider.isPinned);
+  if (pinnedProviders.length > 0 && pinnedProviders.length < providers.length) {
+    return selectSmartProvider(pinnedProviders, userGroup, schedulingWeights);
+  }
   if (!getSmartDispatchConfig().enabled) {
     const sorted = [...providers].sort((a, b) => a.costMultiplier - b.costMultiplier);
     const totalWeight = sorted.reduce((sum, provider) => sum + provider.weight, 0);

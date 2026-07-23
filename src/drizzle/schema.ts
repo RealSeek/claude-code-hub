@@ -244,6 +244,8 @@ export const providers = pgTable('providers', {
   preserveClientIp: boolean('preserve_client_ip').notNull().default(false),
   // 是否跳过当前供应商的 sticky session 复用
   disableSessionReuse: boolean('disable_session_reuse').notNull().default(false),
+  // 分组请求优先尝试该供应商，失败后回退到常规智能调度
+  isPinned: boolean('is_pinned').notNull().default(false),
 
   // 模型重定向：将请求的模型名称重定向到另一个模型
   modelRedirects: jsonb('model_redirects').$type<

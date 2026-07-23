@@ -463,6 +463,10 @@
       "label": "Skip session reuse",
       "desc": "When enabled, the next request will ignore this provider's sticky binding and rerun priority and health checks. Useful when a cheap higher-priority provider should be retried as soon as it recovers."
     },
+    "pinned": {
+      "label": "Pin for group testing",
+      "desc": "Every request in this provider's groups tries it first, then falls back to smart dispatch if unavailable or unsuccessful. Pinning bypasses session reuse and smart cooldown; disable it after testing."
+    },
     "options": {
       "title": "Options",
       "desc": "Additional provider options and overrides"

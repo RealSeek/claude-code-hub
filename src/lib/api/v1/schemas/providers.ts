@@ -63,6 +63,9 @@ export const ProviderSummarySchema = z
     providerVendorId: z.number().int().nullable().describe("Provider vendor id."),
     preserveClientIp: z.boolean().describe("Whether client IP is preserved upstream."),
     disableSessionReuse: z.boolean().describe("Whether sticky session reuse is disabled."),
+    isPinned: z
+      .boolean()
+      .describe("Whether group requests try this provider before smart dispatch."),
     modelRedirects: z.array(z.unknown()).nullable().describe("Model redirect rules."),
     activeTimeStart: NullableStringSchema.describe("Scheduled active start time in HH:mm."),
     activeTimeEnd: NullableStringSchema.describe("Scheduled active end time in HH:mm."),
@@ -615,6 +618,10 @@ export const ProviderCreateSchema = z
       .boolean()
       .optional()
       .describe("Whether sticky session reuse is disabled."),
+    is_pinned: z
+      .boolean()
+      .optional()
+      .describe("Try this provider first for requests in its provider groups."),
     model_redirects: z.array(z.unknown()).nullable().optional().describe("Model redirect rules."),
     active_time_start: TimeOfDaySchema.nullable()
       .optional()

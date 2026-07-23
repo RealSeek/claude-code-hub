@@ -834,6 +834,13 @@
       "when": 1784545743638,
       "tag": "0118_damp_longshot",
       "breakpoints": true
+    },
+    {
+      "idx": 119,
+      "version": "7",
+      "when": 1784823050237,
+      "tag": "0119_flippant_karma",
+      "breakpoints": true
     }
   ]
 }

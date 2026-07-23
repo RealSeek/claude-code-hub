@@ -21,6 +21,8 @@ function makeProvider(overrides: Partial<Provider>): Provider {
     groupTag: null,
     providerType: "claude",
     preserveClientIp: false,
+    disableSessionReuse: false,
+    isPinned: false,
     modelRedirects: null,
     allowedModels: null,
     mcpPassthroughType: "none",
@@ -202,6 +204,24 @@ describe("selectTopPriority with group context", () => {
     const noGroupResult = selectTopPriority([providerA, providerB], null);
     expect(noGroupResult).toHaveLength(1);
     expect(noGroupResult[0].id).toBe(2);
+  });
+
+  it("selects only pinned providers before applying smart priority", () => {
+    const pinned = makeProvider({ id: 1, priority: 99, isPinned: true });
+    const regular = makeProvider({ id: 2, priority: 0, weight: 100 });
+
+    const result = selectTopPriority([regular, pinned], "default");
+
+    expect(result.map((provider: Provider) => provider.id)).toEqual([pinned.id]);
+  });
+
+  it("keeps normal priority behavior when no provider is pinned", () => {
+    const primary = makeProvider({ id: 1, priority: 0 });
+    const fallback = makeProvider({ id: 2, priority: 1 });
+
+    const result = selectTopPriority([fallback, primary], "default");
+
+    expect(result.map((provider: Provider) => provider.id)).toEqual([primary.id]);
   });
 });
 

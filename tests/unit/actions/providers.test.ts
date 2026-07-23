@@ -812,6 +812,19 @@ describe("Provider Actions - Async Optimization", () => {
       );
       expect(terminateProviderSessionsBatchMock).toHaveBeenCalledWith([1], "editProvider");
     });
+
+    it("editProvider: changing pinned state should terminate sticky sessions", async () => {
+      const { editProvider } = await import("@/actions/providers");
+
+      const result = await editProvider(1, { is_pinned: true });
+
+      expect(result.ok).toBe(true);
+      expect(updateProviderMock).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({ is_pinned: true })
+      );
+      expect(terminateProviderSessionsBatchMock).toHaveBeenCalledWith([1], "editProvider");
+    });
   });
 
   describe("deleteProvider", () => {

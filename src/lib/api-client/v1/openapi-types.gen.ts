@@ -4458,6 +4458,8 @@ export interface operations {
                             preserveClientIp: boolean;
                             /** @description Whether sticky session reuse is disabled. */
                             disableSessionReuse: boolean;
+                            /** @description Whether group requests try this provider before smart dispatch. */
+                            isPinned: boolean;
                             /** @description Model redirect rules. */
                             modelRedirects: unknown[] | null;
                             /** @description Scheduled active start time in HH:mm. */
@@ -4506,6 +4508,12 @@ export interface operations {
                             circuitBreakerOpenDuration: number | null;
                             /** @description Circuit breaker half-open success threshold. */
                             circuitBreakerHalfOpenSuccessThreshold: number | null;
+                            circuitBreakerRollingWindowDuration: number | null;
+                            circuitBreakerMinimumSamples: number | null;
+                            circuitBreakerFailureRateThreshold: number | null;
+                            circuitBreakerConsecutiveFailureThreshold: number | null;
+                            circuitBreakerHalfOpenMaxConcurrency: number | null;
+                            circuitBreakerHalfOpenLeaseDuration: number | null;
                             /** @description Optional outbound proxy URL with credentials redacted. */
                             proxyUrl: string | null;
                             /** @description Whether proxy failures fall back to direct calls. */
@@ -4575,6 +4583,14 @@ export interface operations {
                                 recentAvgTtfbMs: number | null;
                                 /** @description Successful TTFB sample count in the last 5 minutes. */
                                 recentTtfbSamples: number;
+                                recentMinTtfbMs?: number | null;
+                                recentMaxTtfbMs?: number | null;
+                                recentP50TtfbMs?: number | null;
+                                recentP95TtfbMs?: number | null;
+                                recentTtfbSampleDetails?: {
+                                    ttfbMs: number;
+                                    at: string;
+                                }[];
                             };
                             /** @description Provider creation date string. */
                             createdAt: string;
@@ -4811,6 +4827,8 @@ export interface operations {
                     preserve_client_ip?: boolean;
                     /** @description Whether sticky session reuse is disabled. */
                     disable_session_reuse?: boolean;
+                    /** @description Try this provider first for requests in its provider groups. */
+                    is_pinned?: boolean;
                     /** @description Model redirect rules. */
                     model_redirects?: unknown[] | null;
                     /** @description Scheduled active start time. */
@@ -4869,6 +4887,12 @@ export interface operations {
                     circuit_breaker_open_duration?: number;
                     /** @description Circuit breaker half-open success threshold. */
                     circuit_breaker_half_open_success_threshold?: number;
+                    circuit_breaker_rolling_window_duration?: number;
+                    circuit_breaker_minimum_samples?: number;
+                    circuit_breaker_failure_rate_threshold?: number;
+                    circuit_breaker_consecutive_failure_threshold?: number;
+                    circuit_breaker_half_open_max_concurrency?: number;
+                    circuit_breaker_half_open_lease_duration?: number;
                     /** @description Optional outbound proxy URL. */
                     proxy_url?: string | null;
                     /** @description Whether proxy failures fall back to direct calls. */
@@ -4988,6 +5012,8 @@ export interface operations {
                         preserveClientIp: boolean;
                         /** @description Whether sticky session reuse is disabled. */
                         disableSessionReuse: boolean;
+                        /** @description Whether group requests try this provider before smart dispatch. */
+                        isPinned: boolean;
                         /** @description Model redirect rules. */
                         modelRedirects: unknown[] | null;
                         /** @description Scheduled active start time in HH:mm. */
@@ -5036,6 +5062,12 @@ export interface operations {
                         circuitBreakerOpenDuration: number | null;
                         /** @description Circuit breaker half-open success threshold. */
                         circuitBreakerHalfOpenSuccessThreshold: number | null;
+                        circuitBreakerRollingWindowDuration: number | null;
+                        circuitBreakerMinimumSamples: number | null;
+                        circuitBreakerFailureRateThreshold: number | null;
+                        circuitBreakerConsecutiveFailureThreshold: number | null;
+                        circuitBreakerHalfOpenMaxConcurrency: number | null;
+                        circuitBreakerHalfOpenLeaseDuration: number | null;
                         /** @description Optional outbound proxy URL with credentials redacted. */
                         proxyUrl: string | null;
                         /** @description Whether proxy failures fall back to direct calls. */
@@ -5105,6 +5137,14 @@ export interface operations {
                             recentAvgTtfbMs: number | null;
                             /** @description Successful TTFB sample count in the last 5 minutes. */
                             recentTtfbSamples: number;
+                            recentMinTtfbMs?: number | null;
+                            recentMaxTtfbMs?: number | null;
+                            recentP50TtfbMs?: number | null;
+                            recentP95TtfbMs?: number | null;
+                            recentTtfbSampleDetails?: {
+                                ttfbMs: number;
+                                at: string;
+                            }[];
                         };
                         /** @description Provider creation date string. */
                         createdAt: string;
@@ -5340,6 +5380,8 @@ export interface operations {
                         preserveClientIp: boolean;
                         /** @description Whether sticky session reuse is disabled. */
                         disableSessionReuse: boolean;
+                        /** @description Whether group requests try this provider before smart dispatch. */
+                        isPinned: boolean;
                         /** @description Model redirect rules. */
                         modelRedirects: unknown[] | null;
                         /** @description Scheduled active start time in HH:mm. */
@@ -5388,6 +5430,12 @@ export interface operations {
                         circuitBreakerOpenDuration: number | null;
                         /** @description Circuit breaker half-open success threshold. */
                         circuitBreakerHalfOpenSuccessThreshold: number | null;
+                        circuitBreakerRollingWindowDuration: number | null;
+                        circuitBreakerMinimumSamples: number | null;
+                        circuitBreakerFailureRateThreshold: number | null;
+                        circuitBreakerConsecutiveFailureThreshold: number | null;
+                        circuitBreakerHalfOpenMaxConcurrency: number | null;
+                        circuitBreakerHalfOpenLeaseDuration: number | null;
                         /** @description Optional outbound proxy URL with credentials redacted. */
                         proxyUrl: string | null;
                         /** @description Whether proxy failures fall back to direct calls. */
@@ -5457,6 +5505,14 @@ export interface operations {
                             recentAvgTtfbMs: number | null;
                             /** @description Successful TTFB sample count in the last 5 minutes. */
                             recentTtfbSamples: number;
+                            recentMinTtfbMs?: number | null;
+                            recentMaxTtfbMs?: number | null;
+                            recentP50TtfbMs?: number | null;
+                            recentP95TtfbMs?: number | null;
+                            recentTtfbSampleDetails?: {
+                                ttfbMs: number;
+                                at: string;
+                            }[];
                         };
                         /** @description Provider creation date string. */
                         createdAt: string;
@@ -5860,6 +5916,8 @@ export interface operations {
                     preserve_client_ip?: boolean;
                     /** @description Whether sticky session reuse is disabled. */
                     disable_session_reuse?: boolean;
+                    /** @description Try this provider first for requests in its provider groups. */
+                    is_pinned?: boolean;
                     /** @description Model redirect rules. */
                     model_redirects?: unknown[] | null;
                     /** @description Scheduled active start time. */
@@ -5918,6 +5976,12 @@ export interface operations {
                     circuit_breaker_open_duration?: number;
                     /** @description Circuit breaker half-open success threshold. */
                     circuit_breaker_half_open_success_threshold?: number;
+                    circuit_breaker_rolling_window_duration?: number;
+                    circuit_breaker_minimum_samples?: number;
+                    circuit_breaker_failure_rate_threshold?: number;
+                    circuit_breaker_consecutive_failure_threshold?: number;
+                    circuit_breaker_half_open_max_concurrency?: number;
+                    circuit_breaker_half_open_lease_duration?: number;
                     /** @description Optional outbound proxy URL. */
                     proxy_url?: string | null;
                     /** @description Whether proxy failures fall back to direct calls. */
@@ -6043,6 +6107,8 @@ export interface operations {
                         preserveClientIp: boolean;
                         /** @description Whether sticky session reuse is disabled. */
                         disableSessionReuse: boolean;
+                        /** @description Whether group requests try this provider before smart dispatch. */
+                        isPinned: boolean;
                         /** @description Model redirect rules. */
                         modelRedirects: unknown[] | null;
                         /** @description Scheduled active start time in HH:mm. */
@@ -6091,6 +6157,12 @@ export interface operations {
                         circuitBreakerOpenDuration: number | null;
                         /** @description Circuit breaker half-open success threshold. */
                         circuitBreakerHalfOpenSuccessThreshold: number | null;
+                        circuitBreakerRollingWindowDuration: number | null;
+                        circuitBreakerMinimumSamples: number | null;
+                        circuitBreakerFailureRateThreshold: number | null;
+                        circuitBreakerConsecutiveFailureThreshold: number | null;
+                        circuitBreakerHalfOpenMaxConcurrency: number | null;
+                        circuitBreakerHalfOpenLeaseDuration: number | null;
                         /** @description Optional outbound proxy URL with credentials redacted. */
                         proxyUrl: string | null;
                         /** @description Whether proxy failures fall back to direct calls. */
@@ -6160,6 +6232,14 @@ export interface operations {
                             recentAvgTtfbMs: number | null;
                             /** @description Successful TTFB sample count in the last 5 minutes. */
                             recentTtfbSamples: number;
+                            recentMinTtfbMs?: number | null;
+                            recentMaxTtfbMs?: number | null;
+                            recentP50TtfbMs?: number | null;
+                            recentP95TtfbMs?: number | null;
+                            recentTtfbSampleDetails?: {
+                                ttfbMs: number;
+                                at: string;
+                            }[];
                         };
                         /** @description Provider creation date string. */
                         createdAt: string;

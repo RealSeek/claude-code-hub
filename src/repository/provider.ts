@@ -244,6 +244,7 @@ export async function createProvider(providerData: CreateProviderData): Promise<
     providerType: providerData.provider_type,
     preserveClientIp: providerData.preserve_client_ip ?? false,
     disableSessionReuse: providerData.disable_session_reuse ?? false,
+    isPinned: providerData.is_pinned ?? false,
     modelRedirects: normalizeProviderModelRedirectRules(providerData.model_redirects),
     allowedModels: normalizeAllowedModelRules(providerData.allowed_models),
     allowedClients: providerData.allowed_clients ?? [],
@@ -352,6 +353,7 @@ export async function createProvider(providerData: CreateProviderData): Promise<
         providerType: providers.providerType,
         preserveClientIp: providers.preserveClientIp,
         disableSessionReuse: providers.disableSessionReuse,
+        isPinned: providers.isPinned,
         modelRedirects: providers.modelRedirects,
         allowedModels: providers.allowedModels,
         allowedClients: providers.allowedClients,
@@ -476,6 +478,7 @@ export async function findProviderList(
       providerType: providers.providerType,
       preserveClientIp: providers.preserveClientIp,
       disableSessionReuse: providers.disableSessionReuse,
+      isPinned: providers.isPinned,
       modelRedirects: providers.modelRedirects,
       allowedModels: providers.allowedModels,
       allowedClients: providers.allowedClients,
@@ -582,6 +585,7 @@ export async function findAllProvidersFresh(): Promise<Provider[]> {
       providerType: providers.providerType,
       preserveClientIp: providers.preserveClientIp,
       disableSessionReuse: providers.disableSessionReuse,
+      isPinned: providers.isPinned,
       modelRedirects: providers.modelRedirects,
       allowedModels: providers.allowedModels,
       allowedClients: providers.allowedClients,
@@ -690,6 +694,7 @@ export async function findProviderById(id: number): Promise<Provider | null> {
       providerType: providers.providerType,
       preserveClientIp: providers.preserveClientIp,
       disableSessionReuse: providers.disableSessionReuse,
+      isPinned: providers.isPinned,
       modelRedirects: providers.modelRedirects,
       allowedModels: providers.allowedModels,
       allowedClients: providers.allowedClients,
@@ -816,6 +821,7 @@ export async function updateProvider(
     dbData.preserveClientIp = providerData.preserve_client_ip;
   if (providerData.disable_session_reuse !== undefined)
     dbData.disableSessionReuse = providerData.disable_session_reuse;
+  if (providerData.is_pinned !== undefined) dbData.isPinned = providerData.is_pinned;
   if (providerData.model_redirects !== undefined)
     dbData.modelRedirects = normalizeProviderModelRedirectRules(providerData.model_redirects);
   if (providerData.allowed_models !== undefined)
@@ -1001,6 +1007,7 @@ export async function updateProvider(
         providerType: providers.providerType,
         preserveClientIp: providers.preserveClientIp,
         disableSessionReuse: providers.disableSessionReuse,
+        isPinned: providers.isPinned,
         modelRedirects: providers.modelRedirects,
         allowedModels: providers.allowedModels,
         allowedClients: providers.allowedClients,

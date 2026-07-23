@@ -429,6 +429,24 @@ export function RoutingSection({ subSectionRefs }: RoutingSectionProps) {
             </SmartInputWrapper>
           </div>
 
+          {!isBatch && (
+            <div className="mt-4 border-t border-border/60 pt-4">
+              <ToggleRow
+                label={t("sections.routing.pinned.label")}
+                description={t("sections.routing.pinned.desc")}
+              >
+                <Switch
+                  id={isEdit ? "edit-provider-pinned" : "provider-pinned"}
+                  checked={state.routing.isPinned}
+                  onCheckedChange={(checked) =>
+                    dispatch({ type: "SET_IS_PINNED", payload: checked })
+                  }
+                  disabled={state.ui.isPending}
+                />
+              </ToggleRow>
+            </div>
+          )}
+
           {/* Per-Group Priority Override */}
           {state.routing.groupTag.length > 0 && (
             <div className="mt-4 space-y-3">

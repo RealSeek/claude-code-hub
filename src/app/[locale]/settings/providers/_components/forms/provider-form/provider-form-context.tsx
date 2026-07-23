@@ -175,6 +175,7 @@ export function createInitialState(
           analysis.routing.disableSessionReuse.status === "uniform"
             ? analysis.routing.disableSessionReuse.value
             : false,
+        isPinned: false,
         modelRedirects:
           analysis.routing.modelRedirects.status === "uniform"
             ? analysis.routing.modelRedirects.value
@@ -387,6 +388,7 @@ export function createInitialState(
         groupTag: [],
         preserveClientIp: false,
         disableSessionReuse: false,
+        isPinned: false,
         modelRedirects: [],
         allowedModels: [],
         allowedClients: [],
@@ -482,6 +484,7 @@ export function createInitialState(
       groupTag: parseProviderGroups(sourceProvider?.groupTag),
       preserveClientIp: sourceProvider?.preserveClientIp ?? false,
       disableSessionReuse: sourceProvider?.disableSessionReuse ?? false,
+      isPinned: sourceProvider?.isPinned ?? false,
       modelRedirects: normalizeProviderModelRedirectRules(sourceProvider?.modelRedirects) ?? [],
       allowedModels: normalizeAllowedModelRules(sourceProvider?.allowedModels) ?? [],
       allowedClients: sourceProvider?.allowedClients ?? [],
@@ -617,6 +620,8 @@ export function providerFormReducer(
       return { ...state, routing: { ...state.routing, preserveClientIp: action.payload } };
     case "SET_DISABLE_SESSION_REUSE":
       return { ...state, routing: { ...state.routing, disableSessionReuse: action.payload } };
+    case "SET_IS_PINNED":
+      return { ...state, routing: { ...state.routing, isPinned: action.payload } };
     case "SET_MODEL_REDIRECTS":
       return { ...state, routing: { ...state.routing, modelRedirects: action.payload } };
     case "SET_ALLOWED_MODELS":

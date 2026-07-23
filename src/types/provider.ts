@@ -383,6 +383,8 @@ export interface Provider {
   preserveClientIp: boolean;
   // 是否跳过当前供应商的 sticky session 复用
   disableSessionReuse: boolean;
+  // 是否在所属分组内强制优先尝试
+  isPinned: boolean;
   modelRedirects: ProviderModelRedirectRule[] | null;
 
   // Scheduled active time window (HH:mm format, null = always active)
@@ -521,6 +523,8 @@ export interface ProviderDisplay {
   preserveClientIp: boolean;
   // 是否跳过当前供应商的 sticky session 复用
   disableSessionReuse: boolean;
+  // 是否在所属分组内强制优先尝试
+  isPinned: boolean;
   modelRedirects: ProviderModelRedirectRule[] | null;
   // Scheduled active time window
   activeTimeStart: string | null;
@@ -708,6 +712,7 @@ export interface CreateProviderData {
   provider_type?: ProviderType;
   preserve_client_ip?: boolean;
   disable_session_reuse?: boolean;
+  is_pinned?: boolean;
   model_redirects?: ProviderModelRedirectRule[] | null;
   active_time_start?: string | null;
   active_time_end?: string | null;
@@ -813,6 +818,7 @@ export interface UpdateProviderData {
   provider_type?: ProviderType;
   preserve_client_ip?: boolean;
   disable_session_reuse?: boolean;
+  is_pinned?: boolean;
   model_redirects?: ProviderModelRedirectRule[] | null;
   active_time_start?: string | null;
   active_time_end?: string | null;
