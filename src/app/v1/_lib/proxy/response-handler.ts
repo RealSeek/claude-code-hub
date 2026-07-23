@@ -3383,7 +3383,7 @@ export class ProxyResponseHandler {
         }
         // 检测 AbortError 的来源：响应超时 vs 客户端中断
         const err = error as Error;
-        if (isClientAbortError(err)) {
+        if (isClientAbortError(err) && !isUpstreamStreamError(err)) {
           // 获取 responseController 引用（由 forwarder.ts 传递）
           const sessionWithController = session as typeof session & {
             responseController?: AbortController;

@@ -1,6 +1,23 @@
 import type { Readable } from "node:stream";
 import { logger } from "@/lib/logger";
 
+export class UpstreamStreamError extends Error {
+  readonly code?: string;
+
+  constructor(cause: Error, message = cause.message || "Upstream response stream failed") {
+    super(message, { cause });
+    this.name = "UpstreamStreamError";
+    this.code = (cause as NodeJS.ErrnoException).code;
+  }
+}
+
+export function isUpstreamStreamError(error: unknown): error is UpstreamStreamError {
+  return (
+    error instanceof UpstreamStreamError ||
+    (error instanceof Error && error.name === "UpstreamStreamError")
+  );
+}
+
 /**
  * 将 Node.js Readable 流转换为 Web ReadableStream（容错版本）
  *

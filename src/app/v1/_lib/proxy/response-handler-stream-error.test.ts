@@ -1,4 +1,6 @@
+import { Readable } from "node:stream";
 import { describe, expect, it } from "vitest";
+import { nodeStreamToWebStreamSafe } from "./node-stream-to-web";
 import { recoverClientSseStreamErrors } from "./response-handler";
 
 const encoder = new TextEncoder();
@@ -43,5 +45,27 @@ describe("recoverClientSseStreamErrors", () => {
     const text = await readText(recoverClientSseStreamErrors(createFailingStream(), "gemini-cli"));
 
     expect(text).toContain('"error":{"code":"upstream_stream_error"');
+  });
+
+  it("turns a premature Node upstream close into a clean terminal SSE error", async () => {
+    const node = new Readable({
+      read() {
+        // pushed manually below
+      },
+    });
+    const recovered = recoverClientSseStreamErrors(
+      nodeStreamToWebStreamSafe(node, 1, "test"),
+      "response"
+    );
+    const textPromise = readText(recovered);
+
+    node.push(encoder.encode("event: response.output_text.delta\ndata: {}\n\n"));
+    await new Promise((resolve) => setImmediate(resolve));
+    node.emit("close");
+
+    const text = await textPromise;
+    expect(text).toContain("event: response.output_text.delta");
+    expect(text).toContain("event: response.error");
+    expect(text).toContain('"code":"upstream_stream_error"');
   });
 });
