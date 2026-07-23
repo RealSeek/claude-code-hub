@@ -54,6 +54,7 @@ import { bindClientAbortListener } from "./client-abort-listener";
 import { isClientAbortError, isTransportError } from "./errors";
 import { emitStreamError } from "./fake-streaming/emitters";
 import type { ProtocolFamily } from "./fake-streaming/response-validator";
+import { isUpstreamStreamError } from "./node-stream-to-web";
 import type { ProxySession } from "./session";
 import {
   consumeDeferredStreamingFinalization,
@@ -2098,7 +2099,7 @@ export class ProxyResponseHandler {
         }
         // 检测 AbortError 的来源：响应超时 vs 客户端中断
         const err = error as Error;
-        if (isClientAbortError(err)) {
+        if (isClientAbortError(err) && !isUpstreamStreamError(err)) {
           // 获取 responseController 引用（由 forwarder.ts 传递）
           const sessionWithController = session as typeof session & {
             responseController?: AbortController;
@@ -3400,7 +3401,7 @@ export class ProxyResponseHandler {
               });
             }
           }
-        } else if (isTransportError(err)) {
+        } else if (isUpstreamStreamError(err) || isTransportError(err)) {
           // 上游流传输错误（SocketError, ECONNRESET 等）：与 upstream abort 相同处理
           // 参见 #916 — controller.error(err) 传播的 transport error
           logger.error("ResponseHandler: Upstream stream transport error", {

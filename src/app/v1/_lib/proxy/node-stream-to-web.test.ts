@@ -1,6 +1,10 @@
 import { Readable } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
-import { nodeStreamToWebStreamSafe } from "./node-stream-to-web";
+import {
+  isUpstreamStreamError,
+  nodeStreamToWebStreamSafe,
+  UpstreamStreamError,
+} from "./node-stream-to-web";
 
 vi.mock("@/lib/logger", () => ({
   logger: {
@@ -54,7 +58,10 @@ describe("nodeStreamToWebStreamSafe", () => {
     const boom = new Error("boom");
     queueMicrotask(() => node.emit("error", boom));
 
-    await expect(reader.read()).rejects.toThrow("boom");
+    const error = await reader.read().catch((caught) => caught);
+    expect(error).toBeInstanceOf(UpstreamStreamError);
+    expect(error).toMatchObject({ message: "boom" });
+    expect(isUpstreamStreamError(error)).toBe(true);
     // After error settles, listeners must be detached
     expect(node.listenerCount("data")).toBe(0);
     expect(node.listenerCount("end")).toBe(0);
@@ -175,5 +182,25 @@ describe("nodeStreamToWebStreamSafe", () => {
     // No throw, reader closed exactly once. Listeners detached.
     expect(node.listenerCount("end")).toBe(0);
     expect(node.listenerCount("close")).toBe(0);
+  });
+
+  it("propagates close-before-end as an upstream stream error", async () => {
+    const node = new Readable({
+      read() {
+        // no-op
+      },
+    });
+
+    const web = nodeStreamToWebStreamSafe(node, 1, "test");
+    const reader = web.getReader();
+    queueMicrotask(() => node.emit("close"));
+
+    const error = await reader.read().catch((caught) => caught);
+    expect(error).toBeInstanceOf(UpstreamStreamError);
+    expect(error).toMatchObject({ message: "Upstream response stream closed before end" });
+    expect(node.listenerCount("data")).toBe(0);
+    expect(node.listenerCount("end")).toBe(0);
+    expect(node.listenerCount("close")).toBe(0);
+    expect(node.listenerCount("error")).toBe(0);
   });
 });
