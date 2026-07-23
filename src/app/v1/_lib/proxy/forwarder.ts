@@ -311,6 +311,7 @@ type StreamingHedgeAttempt = {
   thresholdTriggered: boolean;
   thresholdTimer: NodeJS.Timeout | null;
   reader: ReadableStreamDefaultReader<Uint8Array> | null;
+  preflightController: AbortController;
   response: Response | null;
   releaseAgent: (() => void) | null;
   agentReleased: boolean;
@@ -396,6 +397,37 @@ type ProxySessionWithDetailSnapshotRuntime = ProxySession & {
 // - 该检查仅用于“空响应/假 200”启发式判定，不用于业务逻辑解析；
 // - 超过上限时，仍认为“非空”，但会跳过 JSON 内容结构检查（避免截断导致误判）。
 const NON_STREAM_BODY_INSPECTION_MAX_BYTES = 32 * 1024; // 32 KiB
+const STREAMING_PREFLIGHT_MAX_BYTES = 32 * 1024; // 32 KiB
+
+function findFirstCompleteSseDataEvent(text: string): string | null {
+  let eventStart = 0;
+  let lineStart = 0;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text.charCodeAt(index);
+    if (char !== 10 && char !== 13) continue;
+
+    const lineEnd = index;
+    if (char === 13 && text.charCodeAt(index + 1) === 10) {
+      index += 1;
+    }
+    const nextLineStart = index + 1;
+    if (lineEnd !== lineStart) {
+      lineStart = nextLineStart;
+      continue;
+    }
+
+    const eventText = text.slice(eventStart, lineStart);
+    eventStart = nextLineStart;
+    lineStart = nextLineStart;
+
+    if (/(?:^|[\r\n])data:/.test(eventText.replace(/^\uFEFF/, ""))) {
+      return eventText;
+    }
+  }
+
+  return null;
+}
 
 /**
  * 读取响应体文本，但最多读取 `maxBytes` 字节（用于非流式 2xx 的“空响应/假 200”嗅探）。
@@ -1572,9 +1604,43 @@ export class ProxyForwarder {
           // - 熔断/故障转移统计被误记为成功；
           // - 客户端下一次自动重试可能仍复用到同一 provider，导致“假 200”让重试失效。
           //
-          // 解决：Forwarder 只负责尽快把 Response 返回给下游开始透传，
-          // 把最终成功/失败结算延迟到 ResponseHandler：等 SSE 正常结束后再基于最终 body 补充检查并更新内部状态。
+          // 解决：Forwarder 在提交 Response 前检查首个有效事件；首事件正常后立即透传，
+          // 最终成功/失败仍由 ResponseHandler 在 SSE 结束后基于完整 body 补充检查并更新内部状态。
           if (isSSE) {
+            let streamingResponse: Response;
+            try {
+              streamingResponse = await ProxyForwarder.prepareStreamingResponse(
+                response,
+                currentProvider
+              );
+              const runtime = session as ProxySessionWithAttemptRuntime;
+              if (
+                runtime.responseController?.signal.aborted &&
+                !session.clientAbortSignal?.aborted
+              ) {
+                const cancelPromise = streamingResponse.body?.cancel("streaming_preflight_timeout");
+                cancelPromise?.catch(() => undefined);
+                throw ProxyForwarder.buildStreamingPreflightTimeoutError(currentProvider);
+              }
+              runtime.clearResponseTimeout?.();
+            } catch (error) {
+              // ResponseHandler 不会接管被 preflight 拒绝的流，需要在进入重试前释放本次请求资源。
+              const runtime = session as ProxySessionWithAttemptRuntime;
+              const normalizedError =
+                runtime.responseController?.signal.aborted &&
+                !session.clientAbortSignal?.aborted &&
+                !(error instanceof ProxyError)
+                  ? ProxyForwarder.buildStreamingPreflightTimeoutError(currentProvider)
+                  : error;
+              runtime.clearResponseTimeout?.();
+              const releaseAgent = runtime.releaseAgent;
+              runtime.clearResponseTimeout = undefined;
+              runtime.responseController = undefined;
+              runtime.releaseAgent = undefined;
+              releaseAgent?.();
+              throw normalizedError;
+            }
+
             setDeferredStreamingFinalization(session, {
               providerId: currentProvider.id,
               selectedApiKeyId: currentProvider.selectedApiKeyId,
@@ -1598,7 +1664,7 @@ export class ProxyForwarder {
               statusCode: response.status,
             });
 
-            return response;
+            return streamingResponse;
           }
 
           // 非流式响应：检测空响应
@@ -4103,6 +4169,17 @@ export class ProxyForwarder {
       }
     };
 
+    const resetAttemptResponseRuntime = (attempt: StreamingHedgeAttempt) => {
+      attempt.responseController = null;
+      attempt.clearResponseTimeout = null;
+      attempt.response = null;
+      attempt.reader = null;
+      attempt.preflightController = new AbortController();
+      attempt.releaseAgent = null;
+      attempt.agentReleased = false;
+      attempt.firstChunk = null;
+    };
+
     // 后台 drain 一个落败供应商的响应体以拿回 token 用量并计费。
     // 不取消连接：读到流自然结束（或超时/容量上限）后，复用赢家相同的计费链，
     // 把费用异步累加回原请求行。幂等（loserBillingStarted 守卫），失败静默。
@@ -4221,9 +4298,9 @@ export class ProxyForwarder {
       }
       attempts.delete(attempt);
 
-      // 竞速输家计费开启：仅标记 + 记录决策链，不取消连接、不释放 agent。
+      // 竞速输家计费开启：已完成 preflight 的响应保留连接并后台 drain。
       // 实际的后台 drain 由 runAttempt 的 .then 流程发起（它独占 reader，避免并发读）。
-      if (reason === "hedge_loser" && attempt.billAsLoser) {
+      if (reason === "hedge_loser" && attempt.billAsLoser && attempt.firstChunk) {
         session.addProviderToChain(attempt.provider, {
           ...attempt.endpointAudit,
           reason: "hedge_loser_billed",
@@ -4232,7 +4309,13 @@ export class ProxyForwarder {
           modelRedirect: getAttemptModelRedirect(attempt),
         });
         ProxyForwarder.markProviderFailed(session, failedProviderIds, attempt.provider.id);
+        startLoserBilling(attempt);
         return;
+      }
+
+      // 尚未形成完整首事件的流无法安全交给 loser billing；继续保活会让 preflight 永久占用 reader。
+      if (reason === "hedge_loser" && attempt.billAsLoser) {
+        attempt.billAsLoser = false;
       }
 
       // 因非竞速原因（client_abort / launch_failed 等）被取消：禁止后台计费，正常取消连接。
@@ -4248,6 +4331,7 @@ export class ProxyForwarder {
         ProxyForwarder.markProviderFailed(session, failedProviderIds, attempt.provider.id);
       }
       try {
+        attempt.preflightController.abort(new Error(reason));
         attempt.responseController?.abort(new Error(reason));
       } catch (abortError) {
         logger.debug("ProxyForwarder: hedge attempt abort failed", {
@@ -4429,18 +4513,17 @@ export class ProxyForwarder {
           attempt.reader = response.body.getReader();
 
           try {
-            const firstChunk = await ProxyForwarder.readFirstReadableChunk(attempt.reader);
-            if (firstChunk.done) {
-              await handleAttemptFailure(
-                attempt,
-                new EmptyResponseError(attempt.provider.id, attempt.provider.name, "empty_body")
-              );
-              return;
-            }
+            const firstChunk = await ProxyForwarder.readAndValidateStreamingPreamble(
+              attempt.reader,
+              attempt.provider,
+              response.headers,
+              attempt.preflightController.signal,
+              attempt.provider.streamingIdleTimeoutMs
+            );
 
-            // 保留首块：若本 attempt 落败且需要计费，drain 时需要补回首块的 usage。
-            attempt.firstChunk = firstChunk.value;
-            await commitWinner(attempt, firstChunk.value);
+            // 保留 preflight 已读内容：若本 attempt 落败且需要计费，drain 时需要完整补回。
+            attempt.firstChunk = firstChunk;
+            await commitWinner(attempt, firstChunk);
 
             // 本 attempt 读到首块却落败（winner 已先提交，commitWinner 早退）：
             // 若开启输家计费且本 attempt 不是赢家，在此发起后台 drain（此时已无并发读）。
@@ -4459,6 +4542,9 @@ export class ProxyForwarder {
               firstChunkError instanceof Error
                 ? firstChunkError
                 : new Error(String(firstChunkError));
+            if (!attempt.settled) {
+              releaseAttemptAgent(attempt);
+            }
             // 不提前 return：handleAttemptFailure 的首个守卫会兜底清理“已结算的计费输家”
             // （否则赢家已提交时这里 return 会泄漏其 reader/agent）。
             await handleAttemptFailure(attempt, normalizedError);
@@ -4490,8 +4576,11 @@ export class ProxyForwarder {
       lastError = error;
 
       let errorCategory = await categorizeErrorAsync(error);
+      if (settled || winnerCommitted || attempt.settled) return;
       lastErrorCategory = errorCategory;
       const statusCode = error instanceof ProxyError ? error.statusCode : undefined;
+      const statusCodeInferred =
+        error instanceof ProxyError ? (error.upstreamError?.statusCodeInferred ?? false) : false;
       const errorMessage =
         error instanceof ProxyError ? error.getDetailedErrorMessage() : error.message;
       let matchedRule: MatchedRuleDetails | undefined;
@@ -4507,6 +4596,7 @@ export class ProxyForwarder {
           );
         }
       }
+      if (settled || winnerCommitted || attempt.settled) return;
 
       if (errorCategory === ErrorCategory.CLIENT_ABORT) {
         attempt.settled = true;
@@ -4542,6 +4632,7 @@ export class ProxyForwarder {
         retryAttemptNumber: attempt.requestAttemptCount + 1,
         retryState: attempt.reactiveRectifierRetryState,
       });
+      if (settled || winnerCommitted || attempt.settled) return;
 
       if (reactiveRectifierResult.matched) {
         if (!reactiveRectifierResult.applied) {
@@ -4594,6 +4685,7 @@ export class ProxyForwarder {
             clearTimeout(attempt.thresholdTimer);
             attempt.thresholdTimer = null;
           }
+          resetAttemptResponseRuntime(attempt);
           attempt.requestAttemptCount += 1;
           armAttemptThreshold(attempt);
           runAttempt(attempt);
@@ -4603,6 +4695,7 @@ export class ProxyForwarder {
 
       if (errorCategory === ErrorCategory.NON_RETRYABLE_CLIENT_ERROR) {
         matchedRule = buildMatchedRuleDetails(await getErrorDetectionResultAsync(error));
+        if (settled || winnerCommitted || attempt.settled) return;
         matchedRuleLogContext = buildMatchedRuleLogContext(matchedRule);
 
         logger.warn("ProxyForwarder: Non-retryable client error in hedge, aborting all attempts", {
@@ -4633,6 +4726,7 @@ export class ProxyForwarder {
         providerKeyFailureAlreadyRecorded = true;
 
         const nextProvider = await selectProviderApiKey(failedProvider, attemptedKeyIds);
+        if (settled || winnerCommitted || attempt.settled) return;
         if (
           nextProvider.selectedApiKeyId != null &&
           !attemptedKeyIds.has(nextProvider.selectedApiKeyId)
@@ -4643,6 +4737,7 @@ export class ProxyForwarder {
             reason: "retry_failed",
             attemptNumber: attempt.sequence,
             statusCode,
+            statusCodeInferred,
             errorMessage,
             circuitState: getCircuitState(failedProvider.id),
             modelRedirect: getAttemptModelRedirect(attempt),
@@ -4655,13 +4750,7 @@ export class ProxyForwarder {
           attempt.provider = nextProvider;
           attempt.session.setProvider(nextProvider);
           attempt.requestAttemptCount += 1;
-          attempt.responseController = null;
-          attempt.clearResponseTimeout = null;
-          attempt.response = null;
-          attempt.reader = null;
-          attempt.releaseAgent = null;
-          attempt.agentReleased = false;
-          attempt.firstChunk = null;
+          resetAttemptResponseRuntime(attempt);
 
           logger.info("ProxyForwarder: Hedge participant rotating provider API key", {
             providerId: nextProvider.id,
@@ -4720,6 +4809,7 @@ export class ProxyForwarder {
                   : "retry_failed",
               attemptNumber: attempt.sequence,
               statusCode,
+              statusCodeInferred,
               errorMessage,
               circuitState: getCircuitState(attempt.provider.id),
               modelRedirect: getAttemptModelRedirect(attempt),
@@ -4947,6 +5037,7 @@ export class ProxyForwarder {
         thresholdTriggered: false,
         thresholdTimer: null,
         reader: null,
+        preflightController: new AbortController(),
         response: null,
         releaseAgent: null,
         agentReleased: false,
@@ -5316,10 +5407,37 @@ export class ProxyForwarder {
   }
 
   private static async readFirstReadableChunk(
-    reader: ReadableStreamDefaultReader<Uint8Array>
+    reader: ReadableStreamDefaultReader<Uint8Array>,
+    abortSignal?: AbortSignal
   ): Promise<ReadableStreamReadResult<Uint8Array>> {
     while (true) {
-      const result = await reader.read();
+      if (abortSignal?.aborted) {
+        throw abortSignal.reason ?? new Error("streaming_preflight_aborted");
+      }
+
+      const result = abortSignal
+        ? await new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
+            const onAbort = () => {
+              abortSignal.removeEventListener("abort", onAbort);
+              reject(abortSignal.reason ?? new Error("streaming_preflight_aborted"));
+            };
+            abortSignal.addEventListener("abort", onAbort, { once: true });
+            if (abortSignal.aborted) {
+              onAbort();
+              return;
+            }
+            reader.read().then(
+              (value) => {
+                abortSignal.removeEventListener("abort", onAbort);
+                resolve(value);
+              },
+              (error) => {
+                abortSignal.removeEventListener("abort", onAbort);
+                reject(error);
+              }
+            );
+          })
+        : await reader.read();
       if (result.done) {
         return result;
       }
@@ -5330,6 +5448,163 @@ export class ProxyForwarder {
         return result;
       }
     }
+  }
+
+  private static buildStreamingPreflightTimeoutError(provider: Provider): ProxyError {
+    return new ProxyError("Streaming response timed out before the first complete event", 524, {
+      body: "",
+      providerId: provider.id,
+      providerName: provider.name,
+    });
+  }
+
+  private static async readStreamingPreambleChunk(
+    reader: ReadableStreamDefaultReader<Uint8Array>,
+    provider: Provider,
+    abortSignal: AbortSignal | undefined,
+    idleTimeoutMs: number
+  ): Promise<ReadableStreamReadResult<Uint8Array>> {
+    const readPromise = ProxyForwarder.readFirstReadableChunk(reader, abortSignal);
+    if (idleTimeoutMs <= 0) return readPromise;
+
+    let timeoutId: NodeJS.Timeout | null = null;
+    try {
+      return await Promise.race([
+        readPromise,
+        new Promise<never>((_, reject) => {
+          timeoutId = setTimeout(() => {
+            reject(ProxyForwarder.buildStreamingPreflightTimeoutError(provider));
+          }, idleTimeoutMs);
+        }),
+      ]);
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+    }
+  }
+
+  private static async prepareStreamingResponse(
+    response: Response,
+    provider: Provider
+  ): Promise<Response> {
+    if (!response.body) {
+      throw new EmptyResponseError(provider.id, provider.name, "empty_body");
+    }
+
+    const reader = response.body.getReader();
+    const bufferedPreamble = await ProxyForwarder.readAndValidateStreamingPreamble(
+      reader,
+      provider,
+      response.headers,
+      undefined,
+      provider.streamingIdleTimeoutMs
+    );
+
+    return new Response(ProxyForwarder.buildBufferedFirstChunkStream(bufferedPreamble, reader), {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    });
+  }
+
+  private static async readAndValidateStreamingPreamble(
+    reader: ReadableStreamDefaultReader<Uint8Array>,
+    provider: Provider,
+    headers: Headers,
+    abortSignal?: AbortSignal,
+    idleTimeoutMs: number = 0
+  ): Promise<Uint8Array> {
+    const decoder = new TextDecoder();
+    const chunks: Uint8Array[] = [];
+    let decodedText = "";
+    let decodedBytes = 0;
+    let totalBytes = 0;
+
+    try {
+      while (true) {
+        const result = await ProxyForwarder.readStreamingPreambleChunk(
+          reader,
+          provider,
+          abortSignal,
+          chunks.length > 0 ? idleTimeoutMs : 0
+        );
+        if (result.done) {
+          if (chunks.length === 0) {
+            throw new EmptyResponseError(provider.id, provider.name, "empty_body");
+          }
+
+          decodedText += decoder.decode();
+          const firstEvent = findFirstCompleteSseDataEvent(decodedText);
+          ProxyForwarder.throwIfStreamingPreambleIsError(
+            firstEvent ?? decodedText,
+            provider,
+            headers
+          );
+          break;
+        }
+
+        const chunk = result.value;
+        chunks.push(chunk);
+        totalBytes += chunk.byteLength;
+
+        const remaining = STREAMING_PREFLIGHT_MAX_BYTES - decodedBytes;
+        if (remaining > 0) {
+          const bytesToDecode = Math.min(remaining, chunk.byteLength);
+          decodedText += decoder.decode(chunk.subarray(0, bytesToDecode), { stream: true });
+          decodedBytes += bytesToDecode;
+        }
+
+        const firstEvent = findFirstCompleteSseDataEvent(decodedText);
+        if (firstEvent !== null) {
+          ProxyForwarder.throwIfStreamingPreambleIsError(firstEvent, provider, headers);
+          break;
+        }
+
+        // 无完整 data 事件时限制 preflight 缓冲，避免异常上游阻塞首字节透传或占用过多内存。
+        if (decodedBytes >= STREAMING_PREFLIGHT_MAX_BYTES) {
+          break;
+        }
+      }
+    } catch (error) {
+      const cancelPromise = reader.cancel("streaming_preflight_failed");
+      cancelPromise.catch(() => undefined);
+      throw error;
+    }
+
+    const buffered = new Uint8Array(totalBytes);
+    let offset = 0;
+    for (const chunk of chunks) {
+      buffered.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return buffered;
+  }
+
+  private static throwIfStreamingPreambleIsError(
+    inspectedText: string,
+    provider: Provider,
+    headers: Headers
+  ): void {
+    const detected = detectUpstreamErrorFromSseOrJsonText(inspectedText, {
+      maxJsonCharsForMessageCheck: 0,
+    });
+    const isStrongFake200 =
+      detected.isError &&
+      (detected.code === "FAKE_200_HTML_BODY" ||
+        detected.code === "FAKE_200_JSON_ERROR_NON_EMPTY" ||
+        detected.code === "FAKE_200_JSON_ERROR_MESSAGE_NON_EMPTY");
+    if (!isStrongFake200) return;
+
+    const inferredStatus = inferUpstreamErrorStatusCodeFromText(inspectedText);
+    throw new ProxyError(detected.code, inferredStatus?.statusCode ?? 502, {
+      body: detected.detail ?? "",
+      providerId: provider.id,
+      providerName: provider.name,
+      rawBody: inspectedText,
+      rawBodyTruncated: false,
+      statusCodeInferred: inferredStatus !== null,
+      statusCodeInferenceMatcherId: inferredStatus?.matcherId,
+      headers: Object.fromEntries(headers.entries()),
+    });
   }
 
   private static buildBufferedFirstChunkStream(

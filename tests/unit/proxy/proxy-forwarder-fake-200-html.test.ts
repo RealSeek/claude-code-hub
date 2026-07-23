@@ -195,6 +195,24 @@ function createSession(): ProxySession {
   return session as ProxySession;
 }
 
+function createChunkedSseResponse(chunks: string[]): Response {
+  const encoder = new TextEncoder();
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const chunk of chunks) {
+          controller.enqueue(encoder.encode(chunk));
+        }
+        controller.close();
+      },
+    }),
+    {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    }
+  );
+}
+
 describe("ProxyForwarder - fake 200 HTML body", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -431,6 +449,121 @@ describe("ProxyForwarder - fake 200 HTML body", () => {
           item.statusCodeInferred === true
       )
     ).toBe(true);
+  });
+
+  test("SSE 首事件为跨 chunk 的 fake-200 限流错误时，应在提交响应前重试", async () => {
+    const provider = createProvider({
+      id: 1,
+      name: "p1",
+      key: "k1",
+      maxRetryAttempts: 2,
+      firstByteTimeoutStreamingMs: 0,
+    });
+    const session = createSession();
+    session.request.message.stream = true;
+    session.setProvider(provider);
+
+    const doForward = vi.spyOn(ProxyForwarder as any, "doForward");
+    doForward.mockResolvedValueOnce(
+      createChunkedSseResponse([
+        ": keep-alive\n\n",
+        'data: {"error":{"message":"Upstream rate ',
+        'limit exceeded, please retry later"}}\n\n',
+      ])
+    );
+    const successfulBody =
+      'event: message_start\ndata: {"type":"message_start","message":{"id":"ok"}}\n\n';
+    doForward.mockResolvedValueOnce(createChunkedSseResponse([successfulBody]));
+
+    const response = await ProxyForwarder.send(session);
+
+    expect(await response.text()).toBe(successfulBody);
+    expect(doForward).toHaveBeenCalledTimes(2);
+    expect(mocks.pickRandomProviderWithExclusion).not.toHaveBeenCalled();
+    const retryFailure = session
+      .getProviderChain()
+      .find((item) => item.reason === "retry_failed");
+    expect(retryFailure).toMatchObject({
+      id: 1,
+      statusCode: 429,
+      statusCodeInferred: true,
+      attemptNumber: 1,
+    });
+  });
+
+  test("SSE 首事件正常时，后续同一 chunk 中的错误不得触发透明重试", async () => {
+    const provider = createProvider({
+      id: 1,
+      name: "p1",
+      key: "k1",
+      maxRetryAttempts: 2,
+      firstByteTimeoutStreamingMs: 0,
+    });
+    const session = createSession();
+    session.request.message.stream = true;
+    session.setProvider(provider);
+
+    const body = [
+      'event: response.created\ndata: {"type":"response.created"}\n\r\n',
+      'data: {"error":{"message":"Upstream rate limit exceeded"}}\n\n',
+    ].join("");
+    const doForward = vi
+      .spyOn(ProxyForwarder as any, "doForward")
+      .mockResolvedValueOnce(createChunkedSseResponse([body]));
+
+    const response = await ProxyForwarder.send(session);
+
+    expect(await response.text()).toBe(body);
+    expect(doForward).toHaveBeenCalledTimes(1);
+    expect(session.getProviderChain().some((item) => item.reason === "retry_failed")).toBe(false);
+  });
+
+  test("SSE 首事件不完整时，应按 streaming idle timeout 失败并重试", async () => {
+    vi.useFakeTimers();
+    try {
+      const provider = createProvider({
+        id: 1,
+        name: "p1",
+        key: "k1",
+        maxRetryAttempts: 2,
+        firstByteTimeoutStreamingMs: 0,
+        streamingIdleTimeoutMs: 25,
+      });
+      const session = createSession();
+      session.request.message.stream = true;
+      session.setProvider(provider);
+
+      const encoder = new TextEncoder();
+      const cancel = vi.fn();
+      const incompleteResponse = new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(encoder.encode('data: {"type":"response.created"'));
+          },
+          cancel,
+        }),
+        { status: 200, headers: { "content-type": "text/event-stream" } }
+      );
+      const successfulBody = 'data: {"type":"response.created"}\n\n';
+      const doForward = vi.spyOn(ProxyForwarder as any, "doForward");
+      doForward.mockResolvedValueOnce(incompleteResponse);
+      doForward.mockResolvedValueOnce(createChunkedSseResponse([successfulBody]));
+
+      const responsePromise = ProxyForwarder.send(session);
+      await vi.runAllTimersAsync();
+      const response = await responsePromise;
+
+      expect(await response.text()).toBe(successfulBody);
+      expect(doForward).toHaveBeenCalledTimes(2);
+      expect(cancel).toHaveBeenCalledWith("streaming_preflight_failed");
+      expect(session.getProviderChain()).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ reason: "retry_failed", statusCode: 524 }),
+        ])
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test("200 + 非法 Content-Length 时应按缺失处理，避免漏检 HTML 假200", async () => {

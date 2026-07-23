@@ -430,6 +430,81 @@ describe("ProxyForwarder - first-byte hedge scheduling", () => {
     }
   });
 
+  test("Hedge 应在提交 winner 前识别 SSE fake-200 并轮换 Key", async () => {
+    const provider = createProvider({
+      id: 1,
+      name: "multi-key",
+      key: "key-a",
+      keyStrategy: "sequential",
+      selectedApiKeyId: 101,
+      firstByteTimeoutStreamingMs: 100,
+      apiKeys: [
+        {
+          id: 101,
+          providerId: 1,
+          key: "key-a",
+          label: "A",
+          isEnabled: true,
+          sortOrder: 0,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+        {
+          id: 102,
+          providerId: 1,
+          key: "key-b",
+          label: "B",
+          isEnabled: true,
+          sortOrder: 1,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      ],
+    });
+    const session = createSession();
+    setProviderWithSessionRef(session, provider);
+    mocks.categorizeErrorAsync.mockResolvedValue(ProxyErrorCategory.PROVIDER_ERROR);
+
+    const doForward = vi.spyOn(
+      ProxyForwarder as unknown as {
+        doForward: (...args: unknown[]) => Promise<Response>;
+      },
+      "doForward"
+    );
+    doForward.mockResolvedValueOnce(
+      new Response(
+        'data: {"error":{"message":"Upstream rate limit exceeded, please retry later"}}\n\n',
+        { status: 200, headers: { "content-type": "text/event-stream" } }
+      )
+    );
+    doForward.mockResolvedValueOnce(
+      new Response('event: message_start\ndata: {"type":"message_start"}\n\n', {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      })
+    );
+
+    const response = await ProxyForwarder.send(session);
+
+    expect(await response.text()).toContain('"type":"message_start"');
+    expect(doForward).toHaveBeenCalledTimes(2);
+    expect(doForward.mock.calls.map((call) => (call[1] as Provider).key)).toEqual([
+      "key-a",
+      "key-b",
+    ]);
+    expect(session.getProviderChain()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          reason: "retry_failed",
+          providerKeyId: 101,
+          statusCode: 429,
+          statusCodeInferred: true,
+        }),
+        expect.objectContaining({ reason: "request_success", providerKeyId: 102 }),
+      ])
+    );
+  });
+
   test("shadow session redirect should not overwrite initial provider redirect and winner should keep its own redirect", () => {
     const requestedModel = "claude-haiku-4-5-20251001";
     const fireworksRedirect = "accounts/fireworks/routers/kimi-k2p5-turbo";
