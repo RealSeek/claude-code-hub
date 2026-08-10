@@ -489,7 +489,11 @@ export class ProxySession {
   /**
    * Record Time To First Byte (TTFB) for streaming responses.
    *
-   * Definition: first body chunk received.
+   * Definition: time from upstream request dispatch to first body chunk received.
+   * Uses forwardStartTime (post-guard-pipeline) as the baseline to exclude auth,
+   * rate-limit, and routing overhead — matching new-api's measurement approach.
+   * Falls back to startTime if forwardStartTime was never recorded.
+   *
    * Non-stream responses should persist TTFB as `durationMs` at finalize time.
    */
   recordTtfb(): number {
@@ -497,7 +501,8 @@ export class ProxySession {
       return this.ttfbMs;
     }
 
-    const value = Math.max(0, Date.now() - this.startTime);
+    const baseline = this.forwardStartTime ?? this.startTime;
+    const value = Math.max(0, Date.now() - baseline);
     this.ttfbMs = value;
     this.persistLiveChain();
     return value;

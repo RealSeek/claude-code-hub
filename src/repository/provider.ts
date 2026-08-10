@@ -2019,7 +2019,7 @@ export async function getProviderStatistics(): Promise<ProviderStatisticsRow[]> 
               (DATE_TRUNC('day', CURRENT_TIMESTAMP AT TIME ZONE ${timezone}) AT TIME ZONE ${timezone}) AS today_start,
               ((DATE_TRUNC('day', CURRENT_TIMESTAMP AT TIME ZONE ${timezone}) + INTERVAL '1 day') AT TIME ZONE ${timezone}) AS tomorrow_start,
               ((DATE_TRUNC('day', CURRENT_TIMESTAMP AT TIME ZONE ${timezone}) - INTERVAL '7 days') AT TIME ZONE ${timezone}) AS last7_start,
-              CURRENT_TIMESTAMP - INTERVAL '5 minutes' AS recent_ttfb_start
+              CURRENT_TIMESTAMP - INTERVAL '24 hours' AS recent_ttfb_start
          ),
          provider_stats AS (
            -- 先按最终供应商聚合，再与 providers 做 LEFT JOIN，避免 providers × 今日请求 的笛卡尔积
