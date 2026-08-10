@@ -4068,14 +4068,10 @@ export class ProxyForwarder {
     return alternativeProvider;
   }
 
-  private static shouldUseStreamingHedge(session: ProxySession): boolean {
-    const endpointPolicy = ProxyForwarder.getEndpointPolicy(session);
-    return (
-      (endpointPolicy?.allowRetry ?? true) &&
-      (endpointPolicy?.allowProviderSwitch ?? true) &&
-      (session.request.message as Record<string, unknown>).stream === true &&
-      (session.provider?.firstByteTimeoutStreamingMs ?? 0) > 0
-    );
+  private static shouldUseStreamingHedge(_session: ProxySession): boolean {
+    // Disabled: streaming hedge (multi-provider racing) causes excessive upstream
+    // quota consumption because losing providers still consume tokens.
+    return false;
   }
 
   private static getEndpointPolicy(session: ProxySession) {
