@@ -2230,9 +2230,7 @@ function finalizeDeferredStreamingFinalizationIfNeeded(
             await recordFailure(
               meta.providerId,
               new Error(
-                detected.code.startsWith("FAKE_200_")
-                  ? detected.code
-                  : `FAKE_200_${detected.code}`
+                detected.code.startsWith("FAKE_200_") ? detected.code : `FAKE_200_${detected.code}`
               ),
               {
                 statusCode: effectiveStatusCode,
@@ -2365,10 +2363,16 @@ function finalizeDeferredStreamingFinalizationIfNeeded(
     let primaryDiscoveryBindingUpdated = false;
     try {
       await hedgeBindingCompletion;
-      if (meta.endpointId != null) {
+      const allowCircuitBreakerAccounting =
+        session.getEndpointPolicy().allowCircuitBreakerAccounting;
+      if (allowCircuitBreakerAccounting && meta.endpointId != null) {
         try {
           const { recordEndpointSuccess } = await import("@/lib/endpoint-circuit-breaker");
-          await recordEndpointSuccess(meta.endpointId);
+          await recordEndpointSuccess(
+            meta.endpointId,
+            session.ttfbMs ?? undefined,
+            session.startTime
+          );
         } catch (endpointError) {
           logger.warn("[ResponseHandler] Failed to record endpoint success (stream finalized)", {
             endpointId: meta.endpointId,
@@ -2378,14 +2382,33 @@ function finalizeDeferredStreamingFinalizationIfNeeded(
         }
       }
 
-      try {
-        const { recordSuccess } = await import("@/lib/circuit-breaker");
-        await recordSuccess(meta.providerId);
-      } catch (cbError) {
-        logger.warn("[ResponseHandler] Failed to record streaming success in circuit breaker", {
-          providerId: meta.providerId,
-          error: cbError,
-        });
+      if (allowCircuitBreakerAccounting) {
+        try {
+          const { recordSuccess } = await import("@/lib/circuit-breaker");
+          await recordSuccess(
+            meta.providerId,
+            session.ttfbMs ?? undefined,
+            session.startTime,
+            session.consumeProviderCircuitPermit?.(meta.providerId)
+          );
+        } catch (cbError) {
+          logger.warn("[ResponseHandler] Failed to record streaming success in circuit breaker", {
+            providerId: meta.providerId,
+            error: cbError,
+          });
+        }
+      }
+
+      if (meta.selectedApiKeyId != null) {
+        try {
+          recordProviderApiKeySuccess(meta.selectedApiKeyId, session.startTime);
+        } catch (keyError) {
+          logger.warn("[ResponseHandler] Failed to record streaming API key success", {
+            providerId: meta.providerId,
+            providerKeyId: meta.selectedApiKeyId,
+            error: keyError,
+          });
+        }
       }
 
       // A natural 2xx EOF without a protocol marker remains a successful,

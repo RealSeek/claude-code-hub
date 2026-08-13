@@ -123,11 +123,13 @@ const {
   mockRecordSuccess,
   mockRecordEndpointFailure,
   mockRecordEndpointSuccess,
+  mockRecordProviderApiKeySuccess,
 } = vi.hoisted(() => ({
   mockRecordFailure: vi.fn(),
   mockRecordSuccess: vi.fn(),
   mockRecordEndpointFailure: vi.fn(),
   mockRecordEndpointSuccess: vi.fn(),
+  mockRecordProviderApiKeySuccess: vi.fn(),
 }));
 
 vi.mock("@/lib/circuit-breaker", () => ({
@@ -139,6 +141,10 @@ vi.mock("@/lib/endpoint-circuit-breaker", () => ({
   recordEndpointFailure: mockRecordEndpointFailure,
   recordEndpointSuccess: mockRecordEndpointSuccess,
   resetEndpointCircuit: vi.fn(),
+}));
+
+vi.mock("@/lib/provider-key-dispatch", () => ({
+  recordProviderApiKeySuccess: mockRecordProviderApiKeySuccess,
 }));
 
 import { ProxyResponseHandler } from "@/app/v1/_lib/proxy/response-handler";
@@ -723,17 +729,24 @@ describe("Endpoint circuit breaker isolation", () => {
     }
   );
 
-  it("streaming success DOES call recordEndpointSuccess (regression guard)", async () => {
+  it("streaming success settles endpoint, provider permit and API key state", async () => {
     const session = createSession();
-    setDeferredMeta(session, 42);
+    const consumeProviderCircuitPermit = vi.fn(() => "permit-token");
+    Object.assign(session, {
+      firstByteMs: 125,
+      consumeProviderCircuitPermit,
+    });
+    setDeferredMeta(session, 42, { selectedApiKeyId: 9 });
 
     const response = createSuccessStreamResponse();
     const clientResponse = await ProxyResponseHandler.dispatch(session, response);
     await clientResponse.text();
     await drainAsyncTasks();
 
-    expect(mockRecordEndpointSuccess).toHaveBeenCalledWith(42);
-    expect(mockRecordSuccess).toHaveBeenCalledWith(1);
+    expect(mockRecordEndpointSuccess).toHaveBeenCalledWith(42, 125, session.startTime);
+    expect(mockRecordSuccess).toHaveBeenCalledWith(1, 125, session.startTime, "permit-token");
+    expect(consumeProviderCircuitPermit).toHaveBeenCalledOnce();
+    expect(mockRecordProviderApiKeySuccess).toHaveBeenCalledWith(9, session.startTime);
     expect(mockRecordEndpointFailure).not.toHaveBeenCalled();
     expect(SessionManager.updateSessionBindingSmart).toHaveBeenCalledWith(
       "fake-session",
@@ -748,6 +761,44 @@ describe("Endpoint circuit breaker isolation", () => {
       expect.objectContaining({ statusCode: 200, providerId: 1 }),
       expect.objectContaining({ onCommitted: expect.any(Function) })
     );
+  });
+
+  it("raw passthrough streaming success skips circuit accounting but restores API key state", async () => {
+    const session = createSession();
+    Object.assign(session, {
+      endpointPolicy: resolveEndpointPolicy("/v1/responses/compact"),
+      requestUrl: new URL("http://localhost/v1/responses/compact"),
+      consumeProviderCircuitPermit: vi.fn(() => "permit-token"),
+    });
+    setDeferredMeta(session, 42, { selectedApiKeyId: 9 });
+
+    const clientResponse = await ProxyResponseHandler.dispatch(
+      session,
+      createSuccessStreamResponse()
+    );
+    await clientResponse.text();
+    await drainAsyncTasks();
+
+    expect(mockRecordEndpointSuccess).not.toHaveBeenCalled();
+    expect(mockRecordSuccess).not.toHaveBeenCalled();
+    expect(mockRecordProviderApiKeySuccess).toHaveBeenCalledWith(9, session.startTime);
+    expect(session.consumeProviderCircuitPermit).not.toHaveBeenCalled();
+  });
+
+  it("streaming success restores API key state when provider circuit accounting fails", async () => {
+    const session = createSession();
+    setDeferredMeta(session, 42, { selectedApiKeyId: 9 });
+    mockRecordSuccess.mockRejectedValueOnce(new Error("redis unavailable"));
+
+    const clientResponse = await ProxyResponseHandler.dispatch(
+      session,
+      createSuccessStreamResponse()
+    );
+    await clientResponse.text();
+    await drainAsyncTasks();
+
+    expect(mockRecordSuccess).toHaveBeenCalledOnce();
+    expect(mockRecordProviderApiKeySuccess).toHaveBeenCalledWith(9, session.startTime);
   });
 
   it("streaming success without endpointId should NOT call any endpoint circuit breaker function", async () => {
@@ -900,7 +951,7 @@ describe("Endpoint circuit breaker isolation", () => {
     );
     expect(details).not.toHaveProperty("errorMessage");
     expect(mockRecordFailure).not.toHaveBeenCalled();
-    expect(mockRecordSuccess).toHaveBeenCalledWith(1);
+    expect(mockRecordSuccess).toHaveBeenCalledWith(1, undefined, session.startTime, null);
     expect(SessionManager.compareAndSetSessionProvider).not.toHaveBeenCalled();
     expect(SessionManager.clearVersionedSessionProvider).not.toHaveBeenCalled();
   });
@@ -953,7 +1004,7 @@ describe("Endpoint circuit breaker isolation", () => {
     expect(SessionManager.clearSessionProvider).not.toHaveBeenCalled();
     expect(SessionManager.compareAndSetSessionProvider).not.toHaveBeenCalled();
     expect(mockRecordFailure).not.toHaveBeenCalled();
-    expect(mockRecordSuccess).toHaveBeenCalledWith(1);
+    expect(mockRecordSuccess).toHaveBeenCalledWith(1, undefined, session.startTime, null);
     expect(RateLimitService.releaseProviderSession).toHaveBeenCalledWith(1, "fake-session");
     expect(appendRoutingTraceEvent).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1003,7 +1054,7 @@ describe("Endpoint circuit breaker isolation", () => {
     expect(SessionManager.clearSessionProvider).not.toHaveBeenCalled();
     expect(SessionManager.compareAndSetSessionProvider).not.toHaveBeenCalled();
     expect(mockRecordFailure).not.toHaveBeenCalled();
-    expect(mockRecordSuccess).toHaveBeenCalledWith(1);
+    expect(mockRecordSuccess).toHaveBeenCalledWith(1, undefined, session.startTime, null);
     const details = vi.mocked(updateMessageRequestDetailsDurably).mock.calls.at(-1)?.[1];
     expect(details).toEqual(expect.objectContaining({ statusCode: 200 }));
     expect(details).not.toHaveProperty("errorMessage");
@@ -1078,7 +1129,7 @@ describe("Endpoint circuit breaker isolation", () => {
 
       expect(SessionManager.compareAndSetSessionProvider).not.toHaveBeenCalled();
       expect(mockRecordFailure).not.toHaveBeenCalled();
-      expect(mockRecordSuccess).toHaveBeenCalledWith(1);
+      expect(mockRecordSuccess).toHaveBeenCalledWith(1, undefined, session.startTime, null);
       const details = vi.mocked(updateMessageRequestDetailsDurably).mock.calls.at(-1)?.[1];
       expect(details).toEqual(expect.objectContaining({ statusCode: 200 }));
       expect(details).not.toHaveProperty("errorMessage");
@@ -1117,7 +1168,7 @@ describe("Endpoint circuit breaker isolation", () => {
 
     expect(SessionManager.compareAndSetSessionProvider).not.toHaveBeenCalled();
     expect(mockRecordFailure).not.toHaveBeenCalled();
-    expect(mockRecordSuccess).toHaveBeenCalledWith(1);
+    expect(mockRecordSuccess).toHaveBeenCalledWith(1, undefined, session.startTime, null);
     const details = vi.mocked(updateMessageRequestDetailsDurably).mock.calls.at(-1)?.[1];
     expect(details).toEqual(expect.objectContaining({ statusCode: 200 }));
     expect(details).not.toHaveProperty("errorMessage");

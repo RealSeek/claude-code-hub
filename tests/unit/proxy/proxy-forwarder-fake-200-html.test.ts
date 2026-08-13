@@ -280,9 +280,9 @@ describe("ProxyForwarder - fake 200 HTML body", () => {
     expect(doForward).toHaveBeenCalledTimes(2);
     expect(mocks.recordFailure).toHaveBeenCalledWith(
       provider1.id,
-      expect.objectContaining({ message: "MALFORMED_BUFFERED_JSON" })
+      expect.objectContaining({ message: "MALFORMED_BUFFERED_JSON" }),
+      expect.objectContaining({ requestStartedAt: expect.any(Number) })
     );
-    expect(mocks.recordSuccess).toHaveBeenCalledWith(provider2.id);
     expect(mocks.recordSuccess).not.toHaveBeenCalledWith(provider1.id);
   });
 
@@ -312,7 +312,6 @@ describe("ProxyForwarder - fake 200 HTML body", () => {
     await expect(response.text()).resolves.toBe(body);
     expect(doForward).toHaveBeenCalledOnce();
     expect(mocks.recordFailure).not.toHaveBeenCalled();
-    expect(mocks.recordSuccess).toHaveBeenCalledWith(provider.id);
   });
 
   test("Replay JSON 声明体积超过缓存上限时释放 ownership 并保持响应透传", async () => {
@@ -345,7 +344,6 @@ describe("ProxyForwarder - fake 200 HTML body", () => {
     expect(session.replayState).toBeNull();
     expect(doForward).toHaveBeenCalledOnce();
     expect(mocks.recordFailure).not.toHaveBeenCalled();
-    expect(mocks.recordSuccess).toHaveBeenCalledWith(provider.id);
   });
 
   test("200 + text/html 的 HTML 页面应视为失败并切换供应商", async () => {
@@ -521,6 +519,42 @@ describe("ProxyForwarder - fake 200 HTML body", () => {
     expect(mocks.recordSuccess).not.toHaveBeenCalled();
   });
 
+  test("超过 32KiB 的 JSON error 仍应视为 fake-200 并切换供应商", async () => {
+    const provider1 = createProvider({ id: 1, name: "p1", key: "k1", maxRetryAttempts: 1 });
+    const provider2 = createProvider({ id: 2, name: "p2", key: "k2", maxRetryAttempts: 1 });
+    const session = createSession();
+    session.setProvider(provider1);
+    mocks.pickRandomProviderWithExclusion.mockResolvedValueOnce(provider2);
+
+    const doForward = vi.spyOn(ProxyForwarder as any, "doForward");
+    const jsonErrorBody = JSON.stringify({ error: `upstream blocked ${"x".repeat(40 * 1024)}` });
+    const okJson = JSON.stringify({ type: "message", content: [{ type: "text", text: "ok" }] });
+    doForward.mockResolvedValueOnce(
+      new Response(jsonErrorBody, {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+          "content-length": String(jsonErrorBody.length),
+        },
+      })
+    );
+    doForward.mockResolvedValueOnce(
+      new Response(okJson, {
+        status: 200,
+        headers: { "content-type": "application/json", "content-length": String(okJson.length) },
+      })
+    );
+
+    const response = await ProxyForwarder.send(session);
+    expect(await response.text()).toContain("ok");
+    expect(doForward).toHaveBeenCalledTimes(2);
+    expect(mocks.recordFailure).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({ message: "FAKE_200_JSON_ERROR_NON_EMPTY" }),
+      expect.objectContaining({ requestStartedAt: expect.any(Number) })
+    );
+  });
+
   test("200 + application/json 的非流式 Responses failed 应视为失败并切换供应商", async () => {
     const provider1 = createProvider({ id: 1, name: "p1", key: "k1", maxRetryAttempts: 1 });
     const provider2 = createProvider({ id: 2, name: "p2", key: "k2", maxRetryAttempts: 1 });
@@ -581,7 +615,8 @@ describe("ProxyForwarder - fake 200 HTML body", () => {
     expect(mocks.pickRandomProviderWithExclusion).toHaveBeenCalledWith(session, [1]);
     expect(mocks.recordFailure).toHaveBeenCalledWith(
       1,
-      expect.objectContaining({ message: "FAKE_200_OPENAI_RESPONSE_FAILED" })
+      expect.objectContaining({ message: "FAKE_200_OPENAI_RESPONSE_FAILED" }),
+      expect.objectContaining({ requestStartedAt: expect.any(Number) })
     );
 
     const failure = mocks.recordFailure.mock.calls[0]?.[1];
@@ -589,7 +624,6 @@ describe("ProxyForwarder - fake 200 HTML body", () => {
     expect((failure as ProxyError).statusCode).toBe(502);
     expect((failure as ProxyError).upstreamError?.rawBody).toBe(failedResponseBody);
     expect((failure as ProxyError).upstreamError?.rawBodyTruncated).toBe(false);
-    expect(mocks.recordSuccess).toHaveBeenCalledWith(2);
     expect(mocks.recordSuccess).not.toHaveBeenCalledWith(1);
   });
 
@@ -675,7 +709,7 @@ describe("ProxyForwarder - fake 200 HTML body", () => {
       ])
     );
     const successfulBody =
-      'event: message_start\ndata: {"type":"message_start","message":{"id":"ok"}}\n\n';
+      'event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"text_delta","text":"ok"}}\n\n';
     doForward.mockResolvedValueOnce(createChunkedSseResponse([successfulBody]));
 
     const response = await ProxyForwarder.send(session);
@@ -688,8 +722,8 @@ describe("ProxyForwarder - fake 200 HTML body", () => {
       .find((item) => item.reason === "retry_failed");
     expect(retryFailure).toMatchObject({
       id: 1,
-      statusCode: 429,
-      statusCodeInferred: true,
+      statusCode: 502,
+      statusCodeInferred: false,
       attemptNumber: 1,
     });
   });
@@ -707,7 +741,7 @@ describe("ProxyForwarder - fake 200 HTML body", () => {
     session.setProvider(provider);
 
     const body = [
-      'event: response.created\ndata: {"type":"response.created"}\n\r\n',
+      'event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"text_delta","text":"ok"}}\n\r\n',
       'data: {"error":{"message":"Upstream rate limit exceeded"}}\n\n',
     ].join("");
     const doForward = vi
@@ -747,7 +781,8 @@ describe("ProxyForwarder - fake 200 HTML body", () => {
         }),
         { status: 200, headers: { "content-type": "text/event-stream" } }
       );
-      const successfulBody = 'data: {"type":"response.created"}\n\n';
+      const successfulBody =
+        'event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"text_delta","text":"ok"}}\n\n';
       const doForward = vi.spyOn(ProxyForwarder as any, "doForward");
       doForward.mockResolvedValueOnce(incompleteResponse);
       doForward.mockResolvedValueOnce(createChunkedSseResponse([successfulBody]));
@@ -758,7 +793,7 @@ describe("ProxyForwarder - fake 200 HTML body", () => {
 
       expect(await response.text()).toBe(successfulBody);
       expect(doForward).toHaveBeenCalledTimes(2);
-      expect(cancel).toHaveBeenCalledWith("streaming_preflight_failed");
+      expect(cancel).toHaveBeenCalledWith("stream_gate_precommit");
       expect(session.getProviderChain()).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ reason: "retry_failed", statusCode: 524 }),

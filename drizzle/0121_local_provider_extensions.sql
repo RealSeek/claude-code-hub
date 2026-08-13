@@ -48,9 +48,35 @@ CREATE TABLE IF NOT EXISTS "provider_api_keys" (
 );
 --> statement-breakpoint
 DO $$
+DECLARE
+  missing_columns text;
+BEGIN
+  SELECT string_agg(required.column_name, ', ' ORDER BY required.column_name)
+  INTO missing_columns
+  FROM (VALUES
+    ('id'), ('provider_id'), ('key'), ('label'), ('is_enabled'), ('sort_order'),
+    ('created_at'), ('updated_at')
+  ) AS required(column_name)
+  WHERE NOT EXISTS (
+    SELECT 1
+    FROM information_schema.columns actual
+    WHERE actual.table_schema = 'public'
+      AND actual.table_name = 'provider_api_keys'
+      AND actual.column_name = required.column_name
+  );
+
+  IF missing_columns IS NOT NULL THEN
+    RAISE EXCEPTION 'provider_api_keys 表结构不完整，缺少列: %', missing_columns;
+  END IF;
+END $$;
+--> statement-breakpoint
+DO $$
 BEGIN
   IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint WHERE conname = 'provider_api_keys_provider_id_providers_id_fk'
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'provider_api_keys_provider_id_providers_id_fk'
+      AND conrelid = 'public.provider_api_keys'::regclass
   ) THEN
     ALTER TABLE "provider_api_keys"
       ADD CONSTRAINT "provider_api_keys_provider_id_providers_id_fk"
@@ -67,7 +93,4 @@ INSERT INTO "provider_api_keys" ("provider_id", "key", "label", "is_enabled", "s
 SELECT p."id", p."key", 'legacy', true, 0
 FROM "providers" p
 WHERE p."key" IS NOT NULL
-  AND NOT EXISTS (
-    SELECT 1 FROM "provider_api_keys" k WHERE k."provider_id" = p."id"
-  )
 ON CONFLICT DO NOTHING;

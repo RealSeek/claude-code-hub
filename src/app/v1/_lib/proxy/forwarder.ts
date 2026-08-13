@@ -6,11 +6,7 @@ import type { Dispatcher } from "undici";
 import { request as undiciRequest } from "undici";
 import { findDbPoolAdmissionError, findSafeDatabaseError } from "@/drizzle/admitted-client";
 import { applyAnthropicProviderOverridesWithAudit } from "@/lib/anthropic/provider-overrides";
-import {
-  getCircuitState,
-  getProviderHealthInfo,
-  recordFailure,
-} from "@/lib/circuit-breaker";
+import { getCircuitState, getProviderHealthInfo, recordFailure } from "@/lib/circuit-breaker";
 import {
   hasUsableClaudeMetadataUserId,
   injectClaudeMetadataUserIdWithContext,
@@ -152,10 +148,7 @@ import {
   type ThinkingSignatureRectifierResult,
   type ThinkingSignatureRectifierTrigger,
 } from "./thinking-signature-rectifier";
-import {
-  classifyHTTPResponse,
-  generateCooldownAdvice,
-} from "./error-classifier";
+import { classifyHTTPResponse, generateCooldownAdvice } from "./error-classifier";
 
 function classifyProviderKeyFailure(error: Error): { cooldownUntil?: number } | null {
   if (!(error instanceof ProxyError)) return null;
@@ -211,9 +204,7 @@ function resolveEndpointFailureCooldownUntil(error: Error): number | undefined {
   const advice = generateCooldownAdvice(classification, {} as never);
   if (!advice) return undefined;
   const cooldownUntil = Date.parse(advice.cooldownUntil);
-  return Number.isFinite(cooldownUntil) && cooldownUntil > Date.now()
-    ? cooldownUntil
-    : undefined;
+  return Number.isFinite(cooldownUntil) && cooldownUntil > Date.now() ? cooldownUntil : undefined;
 }
 
 function buildProviderFailureContext(
@@ -508,37 +499,6 @@ type ProxySessionWithDetailSnapshotRuntime = ProxySession & {
 // - 该检查仅用于“空响应/假 200”启发式判定，不用于业务逻辑解析；
 // - 超过上限时，仍认为“非空”，但会跳过 JSON 内容结构检查（避免截断导致误判）。
 const NON_STREAM_BODY_INSPECTION_MAX_BYTES = 32 * 1024; // 32 KiB
-const STREAMING_PREFLIGHT_MAX_BYTES = 32 * 1024; // 32 KiB
-
-function findFirstCompleteSseDataEvent(text: string): string | null {
-  let eventStart = 0;
-  let lineStart = 0;
-
-  for (let index = 0; index < text.length; index += 1) {
-    const char = text.charCodeAt(index);
-    if (char !== 10 && char !== 13) continue;
-
-    const lineEnd = index;
-    if (char === 13 && text.charCodeAt(index + 1) === 10) {
-      index += 1;
-    }
-    const nextLineStart = index + 1;
-    if (lineEnd !== lineStart) {
-      lineStart = nextLineStart;
-      continue;
-    }
-
-    const eventText = text.slice(eventStart, lineStart);
-    eventStart = nextLineStart;
-    lineStart = nextLineStart;
-
-    if (/(?:^|[\r\n])data:/.test(eventText.replace(/^\uFEFF/, ""))) {
-      return eventText;
-    }
-  }
-
-  return null;
-}
 
 /**
  * 读取响应体文本，但最多读取 `maxBytes` 字节（用于非流式 2xx 的“空响应/假 200”嗅探）。
@@ -2018,15 +1978,7 @@ export class ProxyForwarder {
           // 现有 provider fallback，且不会被 ResponseHandler 持久化为 completed Replay。
           const shouldStrictValidateReplayJson = isJson && session.replayState?.role === "owner";
           let replayJsonValidationExceededLimit = false;
-          // 普通非 Replay 请求仍不会对“大体积 JSON”做假 200 检测（例如 Content-Length > 32KiB）。
-          // 原因：
-          // - 非流式路径需要 clone 并额外读取响应体，会带来额外的内存/延迟开销；
-          // - 大体积 JSON 更可能是正常响应（而不是网关/WAF 的短错误 JSON）。
-          // 这意味着：极少数“超大 JSON 错误体 + HTTP 200”的上游异常可能会漏检。
-          const shouldInspectJson =
-            isJson &&
-            hasValidContentLength &&
-            contentLengthBytes <= NON_STREAM_BODY_INSPECTION_MAX_BYTES;
+          const shouldInspectJson = isJson && hasValidContentLength;
           const shouldInspectBody = isHtml || !hasValidContentLength || shouldInspectJson;
           if (shouldStrictValidateReplayJson) {
             const validationLimit = getEnvConfig().REPLAY_MAX_PAYLOAD_BYTES;
@@ -2044,15 +1996,18 @@ export class ProxyForwarder {
               if (validation.exceededLimit) releaseReplayOwnership(session);
             }
           } else if (shouldInspectBody) {
-            // 注意：Response.clone() 会 tee 底层 ReadableStream，可能带来一定的瞬时内存开销；
-            // 这里通过“最多读取 32 KiB”并在截断时 cancel 克隆分支来控制开销。
+            // HTML 和无长度响应仍限制读取量；JSON 必须完整读取，避免大体积错误 envelope 被当成成功。
             const clonedResponse = response.clone();
-            const inspected = await readResponseTextUpTo(
-              clonedResponse,
-              NON_STREAM_BODY_INSPECTION_MAX_BYTES
-            );
-            inspectedText = inspected.text;
-            inspectedTruncated = inspected.truncated;
+            if (shouldInspectJson) {
+              inspectedText = await clonedResponse.text();
+            } else {
+              const inspected = await readResponseTextUpTo(
+                clonedResponse,
+                NON_STREAM_BODY_INSPECTION_MAX_BYTES
+              );
+              inspectedText = inspected.text;
+              inspectedTruncated = inspected.truncated;
+            }
           }
 
           if (inspectedText !== undefined) {
@@ -2188,7 +2143,7 @@ export class ProxyForwarder {
           }
 
           // ========== 成功分支 ==========
-          if (activeEndpoint.endpointId != null) {
+          if (shouldAccountCircuitBreaker && activeEndpoint.endpointId != null) {
             if (session.ttfbMs == null) {
               await recordEndpointSuccess(activeEndpoint.endpointId);
             } else {
@@ -2339,7 +2294,7 @@ export class ProxyForwarder {
             );
           }
 
-          if (!databaseError && activeEndpoint.endpointId != null) {
+          if (shouldAccountCircuitBreaker && !databaseError && activeEndpoint.endpointId != null) {
             if (isTimeoutError || errorCategory === ErrorCategory.SYSTEM_ERROR) {
               await recordEndpointFailure(
                 activeEndpoint.endpointId,
@@ -2593,7 +2548,9 @@ export class ProxyForwarder {
                 maxEndpointIndex: endpointCandidates.length - 1,
               });
 
-              await new Promise((resolve) => setTimeout(resolve, resolveForwarderRetryDelayMs(lastError)));
+              await new Promise((resolve) =>
+                setTimeout(resolve, resolveForwarderRetryDelayMs(lastError))
+              );
               continue; // Continue retry with next endpoint
             }
 
@@ -2708,7 +2665,9 @@ export class ProxyForwarder {
 
             // 未耗尽重试次数：按 Retry-After/退避策略继续重试当前供应商
             if (willRetry) {
-              await new Promise((resolve) => setTimeout(resolve, resolveForwarderRetryDelayMs(lastError)));
+              await new Promise((resolve) =>
+                setTimeout(resolve, resolveForwarderRetryDelayMs(lastError))
+              );
               continue;
             }
 
@@ -2810,10 +2769,7 @@ export class ProxyForwarder {
                 keyFailure.cooldownUntil
               );
               providerKeyFailureAlreadyRecorded = true;
-              const nextProvider = await selectProviderApiKey(
-                currentProvider,
-                attemptedApiKeyIds
-              );
+              const nextProvider = await selectProviderApiKey(currentProvider, attemptedApiKeyIds);
               if (
                 nextProvider.selectedApiKeyId != null &&
                 !attemptedApiKeyIds.has(nextProvider.selectedApiKeyId)
@@ -2829,7 +2785,9 @@ export class ProxyForwarder {
                   attemptedKeyCount: attemptedApiKeyIds.size,
                   configuredKeyCount,
                 });
-                await new Promise((resolve) => setTimeout(resolve, resolveForwarderRetryDelayMs(lastError)));
+                await new Promise((resolve) =>
+                  setTimeout(resolve, resolveForwarderRetryDelayMs(lastError))
+                );
                 continue;
               }
 
@@ -2982,7 +2940,9 @@ export class ProxyForwarder {
                 });
               }
 
-              await new Promise((resolve) => setTimeout(resolve, resolveForwarderRetryDelayMs(lastError)));
+              await new Promise((resolve) =>
+                setTimeout(resolve, resolveForwarderRetryDelayMs(lastError))
+              );
               continue;
             }
 
