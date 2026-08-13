@@ -31,6 +31,7 @@ import type {
   CodexPriorityBillingSource,
   FakeStreamingWhitelistEntry,
   ResponseFixerConfig,
+  SmartDispatchSettings,
   StreamGateSettingMode,
   SystemSettings,
 } from "@/types/system-config";

@@ -213,6 +213,19 @@ function attachReplayOwner(session: ProxySession): void {
   };
 }
 
+function createChunkedSseResponse(chunks: string[]): Response {
+  const encoder = new TextEncoder();
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+        controller.close();
+      },
+    }),
+    { status: 200, headers: { "content-type": "text/event-stream" } }
+  );
+}
+
 describe("ProxyForwarder - fake 200 HTML body", () => {
   beforeEach(() => {
     vi.clearAllMocks();

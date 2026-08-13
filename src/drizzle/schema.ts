@@ -498,6 +498,31 @@ export const providerBatchApplyOperations = pgTable(
 );
 
 // Provider Endpoints table - 供应商(官网域名) + 类型 维度的端点池
+// Provider API Keys table - Provider 内部独立凭据池
+export const providerApiKeys = pgTable('provider_api_keys', {
+  id: serial('id').primaryKey(),
+  providerId: integer('provider_id')
+    .notNull()
+    .references(() => providers.id, { onDelete: 'cascade' }),
+  key: varchar('key').notNull(),
+  label: varchar('label', { length: 100 }),
+  isEnabled: boolean('is_enabled').notNull().default(true),
+  sortOrder: integer('sort_order').notNull().default(0),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({
+  providerApiKeysUnique: uniqueIndex('uniq_provider_api_keys_provider_key').on(
+    table.providerId,
+    table.key
+  ),
+  providerApiKeysSelectionIdx: index('idx_provider_api_keys_selection').on(
+    table.providerId,
+    table.isEnabled,
+    table.sortOrder,
+    table.id
+  ),
+}));
+
 export const providerEndpoints = pgTable('provider_endpoints', {
   id: serial('id').primaryKey(),
   vendorId: integer('vendor_id')

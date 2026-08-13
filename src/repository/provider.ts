@@ -1,10 +1,11 @@
 import "server-only";
 
-import { and, desc, eq, gt, inArray, isNotNull, isNull, lt, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, ne, or, sql } from "drizzle-orm";
 import { db } from "@/drizzle/db";
 import {
   type ProviderBatchApplyLedgerResult,
   type ProviderBatchApplyStoredPreimage,
+  providerApiKeys,
   providerBatchApplyOperations,
   providerEndpoints,
   providers,

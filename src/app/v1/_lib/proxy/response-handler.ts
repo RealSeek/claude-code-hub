@@ -63,6 +63,9 @@ import {
 } from "./demand-driven-response-pump";
 import { isDiscoveryProtocolErrorPayload } from "./discovery-validity";
 import { isClientAbortError, isTransportError } from "./errors";
+import { emitStreamError } from "./fake-streaming/emitters";
+import type { ProtocolFamily } from "./fake-streaming/response-validator";
+import { isUpstreamStreamError } from "./node-stream-to-web";
 import {
   abortReplayOwnership,
   createReplaySpoolIfOwner,
@@ -90,6 +93,76 @@ const STREAM_STATS_TAIL_BYTES = STREAM_STATS_MAX_BUFFER_BYTES - STREAM_STATS_HEA
 const STREAM_STATS_TAIL_CHUNKS = 8192;
 const STREAM_STATS_TRUNCATED_MARKER = "\n\n: [cch_truncated]\n\n";
 const RESPONSE_TEXT_ENCODER = new TextEncoder();
+const STREAM_UPSTREAM_ERROR_MESSAGE = "The upstream response stream ended unexpectedly.";
+
+function buildClientStreamErrorFrame(format: ProxySession["originalFormat"]): Uint8Array | null {
+  const family: ProtocolFamily | null =
+    format === "claude"
+      ? "anthropic"
+      : format === "openai"
+        ? "openai-chat"
+        : format === "response"
+          ? "openai-responses"
+          : format === "gemini" || format === "gemini-cli"
+            ? "gemini"
+            : null;
+  if (!family) return null;
+  return RESPONSE_TEXT_ENCODER.encode(
+    emitStreamError({
+      family,
+      errorCode: "upstream_stream_error",
+      errorMessage: STREAM_UPSTREAM_ERROR_MESSAGE,
+    })
+  );
+}
+
+export function recoverClientSseStreamErrors(
+  source: ReadableStream<Uint8Array>,
+  format: ProxySession["originalFormat"]
+): ReadableStream<Uint8Array> {
+  const reader = source.getReader();
+  let settled = false;
+  const releaseReader = () => {
+    if (settled) return;
+    settled = true;
+    try {
+      reader.releaseLock();
+    } catch {
+      // 流已经由终态接管。
+    }
+  };
+
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read();
+        if (done) {
+          releaseReader();
+          controller.close();
+        } else if (value) {
+          controller.enqueue(value);
+        }
+      } catch (error) {
+        const errorFrame = buildClientStreamErrorFrame(format);
+        releaseReader();
+        if (!errorFrame) {
+          controller.error(error);
+          return;
+        }
+        controller.enqueue(errorFrame);
+        controller.close();
+      }
+    },
+    async cancel(reason) {
+      if (settled) return;
+      try {
+        await reader.cancel(reason);
+      } finally {
+        releaseReader();
+      }
+    },
+  });
+}
 
 function getSessionRequestOwnerKeyId(session: ProxySession): number | undefined {
   return session.authState?.key?.id ?? session.messageContext?.key?.id ?? undefined;
@@ -2154,7 +2227,21 @@ function finalizeDeferredStreamingFinalizationIfNeeded(
         ) {
           try {
             const { recordFailure } = await import("@/lib/circuit-breaker");
-            await recordFailure(meta.providerId, new Error(detected.code));
+            await recordFailure(
+              meta.providerId,
+              new Error(
+                detected.code.startsWith("FAKE_200_")
+                  ? detected.code
+                  : `FAKE_200_${detected.code}`
+              ),
+              {
+                statusCode: effectiveStatusCode,
+                body: allContent,
+                providerKeyId: providerForChain.selectedApiKeyId,
+                provider: providerForChain,
+                circuitPermitToken: session.consumeProviderCircuitPermit?.(meta.providerId),
+              }
+            );
           } catch (cbError) {
             logger.warn("[ResponseHandler] Failed to record fake-200 error in circuit breaker", {
               providerId: meta.providerId,
@@ -2219,7 +2306,13 @@ function finalizeDeferredStreamingFinalizationIfNeeded(
         ) {
           try {
             const { recordFailure } = await import("@/lib/circuit-breaker");
-            await recordFailure(meta.providerId, new Error(errorMessage));
+            await recordFailure(meta.providerId, new Error(errorMessage), {
+              statusCode: effectiveStatusCode,
+              body: allContent,
+              providerKeyId: providerForChain.selectedApiKeyId,
+              provider: providerForChain,
+              circuitPermitToken: session.consumeProviderCircuitPermit?.(meta.providerId),
+            });
           } catch (cbError) {
             logger.warn("[ResponseHandler] Failed to record non-200 error in circuit breaker", {
               providerId: meta.providerId,
@@ -2410,7 +2503,6 @@ function finalizeDeferredStreamingFinalizationIfNeeded(
     }
   };
 
-  await releaseUnsettledPermits();
   return {
     effectiveStatusCode,
     errorMessage,
@@ -2591,7 +2683,13 @@ export class ProxyResponseHandler {
                 commitProviderFailure = async () => {
                   try {
                     const { recordFailure } = await import("@/lib/circuit-breaker");
-                    await recordFailure(provider.id, new Error(errorMessageForFinalize));
+                    await recordFailure(provider.id, new Error(errorMessageForFinalize), {
+                      statusCode,
+                      body: responseText,
+                      providerKeyId: provider.selectedApiKeyId,
+                      provider,
+                      circuitPermitToken: session.consumeProviderCircuitPermit?.(provider.id),
+                    });
                   } catch (cbError) {
                     logger.warn(
                       "ResponseHandler: Failed to record non-200 error in circuit breaker (passthrough)",
@@ -3265,7 +3363,13 @@ export class ProxyResponseHandler {
             postTerminalSideEffects.push(async () => {
               try {
                 const { recordFailure } = await import("@/lib/circuit-breaker");
-                await recordFailure(provider.id, new Error(errorMessageForDb));
+                await recordFailure(provider.id, new Error(errorMessageForDb), {
+                  statusCode,
+                  body: responseText,
+                  providerKeyId: provider.selectedApiKeyId,
+                  provider,
+                  circuitPermitToken: session.consumeProviderCircuitPermit?.(provider.id),
+                });
               } catch (cbError) {
                 logger.warn("ResponseHandler: Failed to record non-200 error in circuit breaker", {
                   providerId: provider.id,

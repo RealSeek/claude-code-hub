@@ -2,6 +2,7 @@ import type { Context } from "hono";
 import { isCountTokensEndpointPath, V1_ENDPOINT_PATHS } from "@/app/v1/_lib/proxy/endpoint-paths";
 import { isRemoteCompactionV2Request } from "@/app/v1/_lib/proxy/remote-compaction";
 import { logger } from "@/lib/logger";
+import { releaseProviderCircuitPermit } from "@/lib/redis/provider-circuit-breaker-store";
 import {
   deleteLiveChain,
   type LiveProviderSnapshot,
@@ -161,6 +162,11 @@ export class ProxySession {
   // Equals ttftMs whenever no gate ran (gate off/shadow, raw passthrough, non-SSE).
   firstByteMs: number | null = null;
 
+  /** 兼容旧统计调用；语义等同于上游首字节指标。 */
+  get ttfbMs(): number | null {
+    return this.firstByteMs;
+  }
+
   // Timestamp when guard pipeline finished and forwarding started (epoch ms).
   forwardStartTime: number | null = null;
 
@@ -290,6 +296,26 @@ export class ProxySession {
 
   // Half-open circuit permits are request-scoped and settled with the final provider outcome.
   private providerCircuitPermits = new Map<number, string>();
+
+  recordProviderCircuitPermit(providerId: number, permitToken: string | null): void {
+    if (!permitToken) return;
+    if (!this.providerCircuitPermits) this.providerCircuitPermits = new Map<number, string>();
+    this.providerCircuitPermits.set(providerId, permitToken);
+  }
+
+  consumeProviderCircuitPermit(providerId: number): string | null {
+    const token = this.providerCircuitPermits?.get(providerId) ?? null;
+    if (token) this.providerCircuitPermits?.delete(providerId);
+    return token;
+  }
+
+  async releaseUnsettledProviderCircuitPermits(): Promise<void> {
+    const permits = [...(this.providerCircuitPermits?.entries() ?? [])];
+    this.providerCircuitPermits?.clear();
+    await Promise.all(
+      permits.map(([providerId, token]) => releaseProviderCircuitPermit(providerId, token))
+    );
+  }
 
   private constructor(init: {
     startTime: number;
@@ -635,7 +661,8 @@ export class ProxySession {
       return this.ttftMs;
     }
 
-    const value = Math.max(0, Date.now() - this.startTime);
+    const baseline = this.forwardStartTime ?? this.startTime;
+    const value = Math.max(0, Date.now() - baseline);
     this.ttftMs = value;
     if (this.firstByteMs === null) {
       this.firstByteMs = value;
@@ -656,7 +683,8 @@ export class ProxySession {
       return;
     }
 
-    this.firstByteMs = Math.max(0, atEpochMs - this.startTime);
+    const baseline = this.forwardStartTime ?? this.startTime;
+    this.firstByteMs = Math.max(0, atEpochMs - baseline);
     this.persistLiveChain();
   }
 

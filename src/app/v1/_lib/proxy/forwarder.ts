@@ -39,6 +39,12 @@ import {
   selectProviderApiKey,
 } from "@/lib/provider-key-dispatch";
 import { RateLimitService } from "@/lib/rate-limit/service";
+import {
+  acquireProviderRequest,
+  ProviderRequestLimitError,
+  type ProviderRequestLease,
+  wrapProviderResponseBody,
+} from "@/lib/provider-request-limiter";
 import type { SessionBindingSnapshot } from "@/lib/redis/session-binding";
 import { SessionManager } from "@/lib/session-manager";
 import {
@@ -5195,6 +5201,8 @@ export class ProxyForwarder {
         void tombstoneAffinityOnFailure(session, attempt.provider.id);
       }
       const statusCode = error instanceof ProxyError ? error.statusCode : undefined;
+      const statusCodeInferred =
+        error instanceof ProxyError ? (error.upstreamError?.statusCodeInferred ?? false) : false;
       const databaseError = findSafeDatabaseError(error);
       const errorMessage =
         databaseError?.message ??
@@ -6882,6 +6890,7 @@ export class ProxyForwarder {
         thresholdTriggered: false,
         thresholdTimer: null,
         reader: null,
+        preflightController: new AbortController(),
         response: null,
         releaseAgent: null,
         agentReleased: false,

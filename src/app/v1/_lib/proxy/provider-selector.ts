@@ -1,5 +1,5 @@
 import { matchesAllowedModelRules } from "@/lib/allowed-model-rules";
-import { getCircuitState, isCircuitOpen } from "@/lib/circuit-breaker";
+import { getCircuitState, isCircuitOpen, tryAcquireProviderCircuitPermit } from "@/lib/circuit-breaker";
 import { getEnvConfig } from "@/lib/config/env.schema";
 import { PROVIDER_GROUP } from "@/lib/constants/provider.constants";
 import { logger } from "@/lib/logger";
@@ -14,6 +14,17 @@ import { RateLimitService } from "@/lib/rate-limit";
 import { buildPublicSessionIdentity, buildScopeTag } from "@/lib/request-identity";
 import { SessionManager } from "@/lib/session-manager";
 import {
+  filterSmartCooldown,
+  getSmartDispatchConfig,
+  hydrateSmartProviderStates,
+  isSmartProviderCooled,
+  refreshSmartDispatchConfig,
+  selectSmartProvider,
+  smartProviderEffectivePriority,
+  smartProviderEffectiveWeight,
+  smartProviderReadyAt,
+} from "@/lib/smart-dispatch";
+import {
   getProxyRuntimeSettings,
   isCacheEffectivenessEnabled,
 } from "@/lib/system-settings/proxy-runtime";
@@ -26,7 +37,11 @@ import { isProviderActiveNow } from "@/lib/utils/provider-schedule";
 import { resolveSystemTimezone } from "@/lib/utils/timezone";
 import { isVendorTypeCircuitOpen } from "@/lib/vendor-type-circuit-breaker";
 import { findAllProviders, findProviderById } from "@/repository/provider";
-import { type GroupBillingPolicy, getGroupBillingPolicy } from "@/repository/provider-groups";
+import {
+  type GroupBillingPolicy,
+  getGroupBillingPolicy,
+  getGroupCostMultiplier,
+} from "@/repository/provider-groups";
 import type { ProviderChainItem } from "@/types/message";
 import type { Provider } from "@/types/provider";
 import { type AffinityLookupResult, getAffinityStore } from "./affinity/affinity-store";
@@ -280,6 +295,7 @@ export class ProxyProviderResolver {
 
     // 动态尝试所有可用供应商（避免无限循环通过 excludedProviders 和 null 返回）
     const excludedProviders: number[] = [];
+    const groupBillingPolicy = await resolveGroupBillingPolicy(session);
 
     // === F3a 前置：读一次运行时设置并计算指纹状态 ===
     // 「忽略客户端 Session ID」开启且请求可指纹化时，粘性交给最长前缀亲和，
@@ -305,7 +321,7 @@ export class ProxyProviderResolver {
 
     // === 会话复用（「忽略客户端 Session ID」语义下仅跳过读取；写路径不变）===
     if (!skipSessionBinding) {
-      const reusedProvider = await ProxyProviderResolver.findReusable(session);
+      const reusedProvider = await ProxyProviderResolver.findReusable(session, groupBillingPolicy);
       if (reusedProvider) {
         session.setProvider(reusedProvider);
 

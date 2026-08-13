@@ -32,6 +32,7 @@ import {
 } from "@/lib/provider-batch-patch-error-codes";
 import { PROVIDER_MODEL_REDIRECT_RULE_LIST_SCHEMA } from "@/lib/provider-model-redirect-schema";
 import { normalizeProviderModelRedirectRules } from "@/lib/provider-model-redirects";
+import { clearProviderApiKeyDispatchStates } from "@/lib/provider-key-dispatch";
 import {
   buildProviderBatchApplyUpdates,
   hasProviderBatchPatchChanges,

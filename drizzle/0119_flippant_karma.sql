@@ -1,1 +1,0 @@
-ALTER TABLE "providers" ADD COLUMN "is_pinned" boolean DEFAULT false NOT NULL;

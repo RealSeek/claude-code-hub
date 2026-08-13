@@ -627,7 +627,8 @@ describe("Endpoint circuit breaker isolation", () => {
 
     expect(mockRecordFailure).toHaveBeenCalledWith(
       1,
-      expect.objectContaining({ message: "FAKE_200_OPENAI_RESPONSE_FAILED" })
+      expect.objectContaining({ message: "FAKE_200_OPENAI_RESPONSE_FAILED" }),
+      expect.objectContaining({ statusCode: 502, body: expect.any(String) })
     );
     expect(mockRecordEndpointSuccess).not.toHaveBeenCalled();
     expect(mockRecordEndpointFailure).not.toHaveBeenCalled();
@@ -708,10 +709,10 @@ describe("Endpoint circuit breaker isolation", () => {
         upstreamStatusCode: statusCode,
       });
 
-    const response = createNon200StreamResponse(429);
-    const clientResponse = await ProxyResponseHandler.dispatch(session, response);
-    await clientResponse.text();
-    await drainAsyncTasks();
+      const response = createNon200StreamResponse(statusCode);
+      const clientResponse = await ProxyResponseHandler.dispatch(session, response);
+      await clientResponse.text();
+      await drainAsyncTasks();
 
       expect(mockRecordFailure).toHaveBeenCalledWith(
         1,
@@ -1171,7 +1172,8 @@ describe("Endpoint circuit breaker isolation", () => {
     expect(mockRecordSuccess).not.toHaveBeenCalled();
     expect(mockRecordFailure).toHaveBeenCalledWith(
       1,
-      expect.objectContaining({ message: "FAKE_200_OPENAI_RESPONSE_FAILED" })
+      expect.objectContaining({ message: "FAKE_200_OPENAI_RESPONSE_FAILED" }),
+      expect.objectContaining({ statusCode: 502, body: expect.any(String) })
     );
   });
 

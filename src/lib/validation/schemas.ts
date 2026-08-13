@@ -1253,6 +1253,23 @@ export const UpdateSystemSettingsSchema = z
         }
       })
       .optional(),
+    smartDispatchConfig: z
+      .object({
+        enabled: z.boolean().optional(),
+        healthScoreEnabled: z.boolean().optional(),
+        windowMinutes: z.coerce.number().int().min(1).max(1440).optional(),
+        minConfidentSample: z.coerce.number().int().min(1).max(100000).optional(),
+        successRatePenaltyWeight: z.coerce.number().min(0).max(10000).optional(),
+        enableTTFBScore: z.boolean().optional(),
+        ttfbPenaltyWeight: z.coerce.number().min(0).max(10000).optional(),
+        ttfbMaxSlowRatio: z.coerce.number().min(0).max(100).optional(),
+        ttfbMinConfidentSample: z.coerce.number().int().min(1).max(100000).optional(),
+        cooldownBaseMs: z.coerce.number().int().min(1000).max(86400000).optional(),
+        cooldownMaxMs: z.coerce.number().int().min(1000).max(604800000).optional(),
+        ewmaAlpha: z.coerce.number().min(0.01).max(1).optional(),
+      })
+      .partial()
+      .optional(),
     // F1 流式内容门控模式（可选）
     streamGateMode: z
       .enum(["off", "shadow", "enforce"], { message: "不支持的流式门控模式" })

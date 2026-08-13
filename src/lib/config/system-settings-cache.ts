@@ -16,7 +16,10 @@ import { logger } from "@/lib/logger";
 import { DEFAULT_SITE_TITLE } from "@/lib/site-title";
 import { REPLAY_CACHE_TTL_MINUTES_DEFAULT } from "@/lib/validation/replay-settings";
 import { getSystemSettings } from "@/repository/system-config";
-import type { SystemSettings } from "@/types/system-config";
+import {
+  DEFAULT_SMART_DISPATCH_SETTINGS,
+  type SystemSettings,
+} from "@/types/system-config";
 import { getEnvConfig } from "./env.schema";
 
 /** Cache TTL in milliseconds (1 minute) */

@@ -65,6 +65,7 @@ import type {
   StreamGateSettingMode,
   SystemSettings,
 } from "@/types/system-config";
+import { DEFAULT_SMART_DISPATCH_SETTINGS } from "@/types/system-config";
 
 interface SystemSettingsFormProps {
   /** Read-only runtime value; SESSION_TTL is not a persisted system setting. */

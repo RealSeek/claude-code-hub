@@ -1,1 +1,0 @@
-ALTER TABLE "providers" ADD COLUMN "circuit_breaker_base_open_duration" integer DEFAULT 60000;

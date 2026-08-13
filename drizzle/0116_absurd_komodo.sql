@@ -1,1 +1,0 @@
-ALTER TABLE "provider_groups" ADD COLUMN "max_upstream_multiplier" numeric(10, 4);
