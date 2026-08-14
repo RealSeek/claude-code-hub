@@ -210,4 +210,20 @@ describe("availability projection-worker", () => {
     expect(executeMock).toHaveBeenCalledTimes(1);
     expect(withAdvisoryLock).not.toHaveBeenCalled();
   });
+
+  it("backfill 完成标记为 PostgreSQL 多态 JSON 参数提供明确类型", async () => {
+    vi.doMock("@/drizzle/db", () => ({
+      db: { execute: vi.fn(), transaction: vi.fn() },
+    }));
+    vi.doMock("@/lib/migrate", () => ({ withAdvisoryLock: vi.fn() }));
+    vi.doMock("@/lib/logger", () => ({
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    }));
+
+    const { __test__ } = await import("@/lib/availability/projection-worker");
+    const statement = sqlToString(__test__.buildBackfillMetaStatement(123));
+
+    expect(statement).toContain("'rangedays', $1::int");
+    expect(statement).toContain("'inserted', $2::bigint");
+  });
 });

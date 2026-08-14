@@ -106,6 +106,23 @@ async function enqueueBackfillChunk(fromIso: string, toIso: string): Promise<num
   return Number(row?.n ?? 0);
 }
 
+function buildBackfillMetaStatement(inserted: number) {
+  return sql`
+    INSERT INTO projection_meta (key, value, updated_at)
+    VALUES (
+      'backfill_done',
+      jsonb_build_object(
+        'at', now(),
+        'note', 'availability backfill',
+        'rangeDays', ${BACKFILL_RANGE_DAYS}::int,
+        'inserted', ${inserted}::bigint
+      ),
+      now()
+    )
+    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()
+  `;
+}
+
 async function bootstrapBackfill(): Promise<void> {
   const existing = await db.execute(sql`
     SELECT key FROM projection_meta WHERE key = 'backfill_done' LIMIT 1
@@ -146,20 +163,7 @@ async function bootstrapBackfill(): Promise<void> {
       }
 
       if (!state().stopRequested) {
-        await db.execute(sql`
-          INSERT INTO projection_meta (key, value, updated_at)
-          VALUES (
-            'backfill_done',
-            jsonb_build_object(
-              'at', now(),
-              'note', 'availability backfill',
-              'rangeDays', ${BACKFILL_RANGE_DAYS},
-              'inserted', ${inserted}
-            ),
-            now()
-          )
-          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()
-        `);
+        await db.execute(buildBackfillMetaStatement(inserted));
         logger.info("[AvailProjection] backfill enqueue finished", { inserted });
       }
 
@@ -534,6 +538,7 @@ export function getAvailabilityProjectionWorkerStatus() {
 /** Test-only helpers */
 export const __test__ = {
   bootstrapBackfill,
+  buildBackfillMetaStatement,
   recomputeAvailCurrent,
   BACKFILL_RANGE_DAYS,
   BATCH,
