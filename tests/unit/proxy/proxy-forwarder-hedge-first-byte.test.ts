@@ -401,6 +401,24 @@ function withThinkingBlocks(session: ProxySession): void {
 describe("ProxyForwarder - first-byte hedge scheduling", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    const forwarderInternals = ProxyForwarder as unknown as {
+      getEndpointPolicy: (session: ProxySession) => {
+        allowRetry: boolean;
+        allowProviderSwitch: boolean;
+      };
+      shouldUseStreamingHedge: (session: ProxySession) => boolean;
+    };
+    // 生产入口已关闭；本文件继续直接验证保留的 Hedge 实现。
+    vi.spyOn(forwarderInternals, "shouldUseStreamingHedge").mockImplementation((session) => {
+      const endpointPolicy = forwarderInternals.getEndpointPolicy(session);
+      return (
+        endpointPolicy.allowRetry &&
+        endpointPolicy.allowProviderSwitch &&
+        !session.isStreamingHedgeDisabled() &&
+        (session.request.message as Record<string, unknown>).stream === true &&
+        (session.provider?.firstByteTimeoutStreamingMs ?? 0) > 0
+      );
+    });
     mocks.getCachedSystemSettings.mockResolvedValue({
       enableThinkingSignatureRectifier: true,
       enableThinkingBudgetRectifier: true,

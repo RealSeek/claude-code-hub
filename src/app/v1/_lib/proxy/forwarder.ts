@@ -4464,17 +4464,9 @@ export class ProxyForwarder {
     return alternativeProvider;
   }
 
-  private static shouldUseStreamingHedge(session: ProxySession): boolean {
-    const endpointPolicy = ProxyForwarder.getEndpointPolicy(session);
-    if (session.isStreamingHedgeDisabled()) {
-      return false;
-    }
-    return (
-      (endpointPolicy?.allowRetry ?? true) &&
-      (endpointPolicy?.allowProviderSwitch ?? true) &&
-      (session.request.message as Record<string, unknown>).stream === true &&
-      (session.provider?.firstByteTimeoutStreamingMs ?? 0) > 0
-    );
+  private static shouldUseStreamingHedge(_session: ProxySession): boolean {
+    // 禁用多供应商并发竞速，避免输家请求继续消耗上游余额。
+    return false;
   }
 
   private static async prepareStreamingDiscovery(

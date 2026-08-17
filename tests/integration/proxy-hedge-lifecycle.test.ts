@@ -639,9 +639,9 @@ describe("proxy hedge transport/lifecycle integration (persistence and control-p
       pathName: "sequential",
     },
     {
-      expectedMode: "legacy_hedge",
+      expectedMode: "legacy_serial",
       firstByteTimeoutStreamingMs: 5_000,
-      pathName: "first-byte hedge",
+      pathName: "configured first-byte timeout with hedge disabled",
     },
   ])(
     "records TTFT at the enforced Responses gate commit before downstream reads ($pathName path)",
