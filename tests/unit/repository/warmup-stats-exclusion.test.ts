@@ -226,5 +226,12 @@ describe("Warmup 请求：不计入任何聚合统计", () => {
     expect(querySql.toLowerCase()).toContain("is null");
     expect(querySql.toLowerCase()).toContain("is_replay");
     expect(querySql.toLowerCase()).toContain("false");
+    expect(querySql.toLowerCase()).not.toContain("interval '24 hours'");
+    expect(querySql.toLowerCase()).not.toContain("recent_ttfb_start");
+    expect(querySql.toLowerCase().match(/created_at\s*>=\s*\(select today_start from bounds\)/g))
+      .toHaveLength(3);
+    expect(
+      querySql.toLowerCase().match(/created_at\s*<\s*\(select tomorrow_start from bounds\)/g)
+    ).toHaveLength(3);
   });
 });

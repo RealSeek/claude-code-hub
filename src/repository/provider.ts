@@ -2669,7 +2669,7 @@ export async function getDistinctProviderGroups(): Promise<string[]> {
  *
  * 性能优化：
  * - provider_stats: 先按最终供应商聚合，再与 providers 做 LEFT JOIN，避免 providers × usage_ledger 的笛卡尔积
- * - bounds: 用“按时区计算的时间范围”过滤 created_at，便于命中 created_at 索引
+ * - bounds: 用“按时区计算的时间范围”过滤今日统计与 TTFB，便于命中 created_at 索引
  * - DST 兼容：对“本地日界/近 7 日”先在 timestamp 上做 +interval，再 AT TIME ZONE 回到 timestamptz，避免夏令时跨日偏移
  * - latest_call: 限制近 7 天范围，避免扫描历史数据
  */
@@ -2726,8 +2726,7 @@ export async function getProviderStatistics(): Promise<ProviderStatisticsRow[]> 
            SELECT
               (DATE_TRUNC('day', CURRENT_TIMESTAMP AT TIME ZONE ${timezone}) AT TIME ZONE ${timezone}) AS today_start,
               ((DATE_TRUNC('day', CURRENT_TIMESTAMP AT TIME ZONE ${timezone}) + INTERVAL '1 day') AT TIME ZONE ${timezone}) AS tomorrow_start,
-              ((DATE_TRUNC('day', CURRENT_TIMESTAMP AT TIME ZONE ${timezone}) - INTERVAL '7 days') AT TIME ZONE ${timezone}) AS last7_start,
-              CURRENT_TIMESTAMP - INTERVAL '24 hours' AS recent_ttfb_start
+              ((DATE_TRUNC('day', CURRENT_TIMESTAMP AT TIME ZONE ${timezone}) - INTERVAL '7 days') AT TIME ZONE ${timezone}) AS last7_start
          ),
          provider_stats AS (
            -- 先按最终供应商聚合，再与 providers 做 LEFT JOIN，避免 providers × 今日请求 的笛卡尔积
@@ -2768,7 +2767,8 @@ export async function getProviderStatistics(): Promise<ProviderStatisticsRow[]> 
             AND is_success = TRUE
             AND ttfb_ms IS NOT NULL
             AND ttfb_ms >= 0
-            AND created_at >= (SELECT recent_ttfb_start FROM bounds)
+            AND created_at >= (SELECT today_start FROM bounds)
+            AND created_at < (SELECT tomorrow_start FROM bounds)
           GROUP BY final_provider_id
         ),
         recent_ttfb_ranked AS (
@@ -2785,7 +2785,8 @@ export async function getProviderStatistics(): Promise<ProviderStatisticsRow[]> 
             AND is_success = TRUE
             AND ttfb_ms IS NOT NULL
             AND ttfb_ms >= 0
-            AND created_at >= (SELECT recent_ttfb_start FROM bounds)
+            AND created_at >= (SELECT today_start FROM bounds)
+            AND created_at < (SELECT tomorrow_start FROM bounds)
         ),
         recent_ttfb_details AS (
           SELECT
