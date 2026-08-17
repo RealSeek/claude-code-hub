@@ -32,14 +32,25 @@
       "placeholder": "例如 30"
     },
     "newApiAccount": {
+      "accessToken": {
+        "label": "New-API Access Token",
+        "desc": "在 New-API 个人设置中生成的系统管理 Access Token，探测时优先使用",
+        "configured": "已配置 Access Token；留空将保持当前值",
+        "placeholder": "输入系统管理 Access Token",
+        "leaveEmpty": "留空保持当前 Access Token",
+        "clear": "清除已配置的 Access Token",
+        "cleared": "保存后将清除当前 Access Token；输入新值可改为替换",
+        "show": "显示 Access Token",
+        "hide": "隐藏 Access Token"
+      },
       "userId": {
         "label": "New-API 用户 ID",
-        "desc": "作为 New-Api-User 请求头查询账户余额",
+        "desc": "仅 Cookie 兼容模式必填；使用 Access Token 时可选",
         "placeholder": "例如 1"
       },
       "cookie": {
         "label": "New-API Session Cookie",
-        "desc": "填写登录后的完整 Cookie，例如 session=...；不是供应商 API Key",
+        "desc": "旧版兼容凭据；未配置 Access Token 时填写完整 Cookie，例如 session=...",
         "configured": "已配置账户凭据；留空将保持当前 Cookie",
         "placeholder": "输入完整 Session Cookie",
         "leaveEmpty": "留空保持当前 Cookie",
@@ -47,7 +58,7 @@
         "hide": "隐藏 Session Cookie",
         "invalidWarning": "最近一次余额与倍率同步表明 New-API Cookie 已失效或认证被拒绝。请填写新的 Cookie，并核对用户 ID。"
       },
-      "accessTokenInvalidWarning": "最近一次余额与倍率同步表明 New-API Access Token 已失效或认证被拒绝。请改用有效的 Session Cookie，并核对用户 ID。"
+      "accessTokenInvalidWarning": "最近一次余额与倍率同步表明 New-API Access Token 已失效或认证被拒绝。请填写新的 Access Token。"
     },
     "sub2apiAccount": {
       "authToken": {

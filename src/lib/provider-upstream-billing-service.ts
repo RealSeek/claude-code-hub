@@ -68,17 +68,14 @@ function toProviderProbeConfigs(provider: Provider): ProviderUpstreamBillingConf
   if (provider.upstreamBillingType === "official") return [];
   const keys = enabledProviderApiKeys(provider);
   if (keys.length > 0) {
-    const primary = keys[0];
-    return [
-      {
-        ...toProbeConfig(provider, {
-          id: primary.id,
-          key: primary.key,
-          label: primary.label,
-        }),
-        providerKeys: [{ id: primary.id, key: primary.key, label: primary.label }],
-      },
-    ];
+    const providerKeys = keys.map(({ id, key, label }) => ({ id, key, label }));
+    if (provider.upstreamBillingType === "new-api") {
+      return [{ ...toProbeConfig(provider, providerKeys[0]), providerKeys }];
+    }
+    if (provider.upstreamBillingType === "sub2api") {
+      return providerKeys.map((key) => ({ ...toProbeConfig(provider, key), providerKeys: [key] }));
+    }
+    return [{ ...toProbeConfig(provider, providerKeys[0]), providerKeys: [providerKeys[0]] }];
   }
   if ((provider.apiKeys ?? []).length > 0) return [];
   return [
@@ -171,13 +168,12 @@ export async function probeProviderBilling(
   const recognized = keyResults.filter(
     (result) => result.status === "ok" || result.status === "partial"
   );
+  const balanced = keyResults.filter(
+    (result) => result.balanceUsd !== null && result.balanceRaw !== null
+  );
   const source = recognized.find((result) => result.source)?.source ?? null;
-  const balancesUsd = successful
-    .map((result) => result.balanceUsd)
-    .filter((value): value is number => value !== null);
-  const balancesRaw = successful
-    .map((result) => result.balanceRaw)
-    .filter((value): value is number => value !== null);
+  const balancesUsd = balanced.map((result) => result.balanceUsd as number);
+  const balancesRaw = balanced.map((result) => result.balanceRaw as number);
   const multiplierValues = keyResults
     .map((result) => result.effectiveMultiplier)
     .filter((value): value is number => value !== null);
@@ -187,12 +183,9 @@ export async function probeProviderBilling(
   const failedKeyCount = keyResults.length - successful.length;
   const complete = failedKeyCount === 0;
   const hasAccountScopedMultiKeyBalance =
-    keyResults.length > 1 && successful.some((result) => result.balanceScope === "account");
+    keyResults.length > 1 && balanced.some((result) => result.balanceScope === "account");
   const hasCompleteBalance =
-    complete &&
-    !hasAccountScopedMultiKeyBalance &&
-    balancesUsd.length === successful.length &&
-    balancesRaw.length === successful.length;
+    !hasAccountScopedMultiKeyBalance && balanced.length === keyResults.length;
   const status = complete
     ? "ok"
     : recognized.length > 0
@@ -214,8 +207,8 @@ export async function probeProviderBilling(
         ? balancesRaw.reduce((sum, value) => sum + value, 0)
         : null,
     balanceScope:
-      successful.length === 1
-        ? (successful[0]?.balanceScope ?? null)
+      balanced.length === 1
+        ? (balanced[0]?.balanceScope ?? null)
         : hasAccountScopedMultiKeyBalance
           ? "account"
           : hasCompleteBalance
@@ -233,8 +226,8 @@ export async function probeProviderBilling(
           ? null
           : (keyResults.find((result) => result.errorCode)?.errorCode ?? "probe_failed"),
     balanceAggregation:
-      hasCompleteBalance && successful.length > 0
-        ? successful.length > 1
+      hasCompleteBalance && balanced.length > 0
+        ? balanced.length > 1
           ? "sum_of_keys"
           : "single_key"
         : "unavailable",

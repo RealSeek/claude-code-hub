@@ -376,9 +376,73 @@ export function BasicInfoSection({
           {state.basic.upstreamBillingType === "new-api" && (
             <div className="grid gap-4 md:grid-cols-2">
               <SmartInputWrapper
+                label={t("sections.basic.newApiAccount.accessToken.label")}
+                description={
+                  state.basic.upstreamBillingAccessToken === null
+                    ? t("sections.basic.newApiAccount.accessToken.cleared")
+                    : isEdit && provider?.hasUpstreamBillingAccessToken
+                      ? t("sections.basic.newApiAccount.accessToken.configured")
+                      : t("sections.basic.newApiAccount.accessToken.desc")
+                }
+              >
+                <div className="relative">
+                  <Input
+                    id={isEdit ? "edit-new-api-access-token" : "new-api-access-token"}
+                    type={showBillingAccessToken ? "text" : "password"}
+                    value={state.basic.upstreamBillingAccessToken ?? ""}
+                    onChange={(event) =>
+                      dispatch({
+                        type: "SET_UPSTREAM_BILLING_ACCESS_TOKEN",
+                        payload: event.target.value,
+                      })
+                    }
+                    placeholder={
+                      isEdit && provider?.hasUpstreamBillingAccessToken
+                        ? t("sections.basic.newApiAccount.accessToken.leaveEmpty")
+                        : t("sections.basic.newApiAccount.accessToken.placeholder")
+                    }
+                    disabled={state.ui.isPending}
+                    className="pr-20 font-mono text-sm"
+                    autoComplete="new-password"
+                    spellCheck={false}
+                  />
+                  {isEdit &&
+                    provider?.hasUpstreamBillingAccessToken &&
+                    state.basic.upstreamBillingAccessToken !== null && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          dispatch({ type: "SET_UPSTREAM_BILLING_ACCESS_TOKEN", payload: null })
+                        }
+                        className="absolute right-10 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-destructive"
+                        aria-label={t("sections.basic.newApiAccount.accessToken.clear")}
+                        title={t("sections.basic.newApiAccount.accessToken.clear")}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    )}
+                  <button
+                    type="button"
+                    onClick={() => setShowBillingAccessToken((visible) => !visible)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
+                    aria-label={
+                      showBillingAccessToken
+                        ? t("sections.basic.newApiAccount.accessToken.hide")
+                        : t("sections.basic.newApiAccount.accessToken.show")
+                    }
+                  >
+                    {showBillingAccessToken ? (
+                      <EyeOff className="h-4 w-4" />
+                    ) : (
+                      <Eye className="h-4 w-4" />
+                    )}
+                  </button>
+                </div>
+              </SmartInputWrapper>
+
+              <SmartInputWrapper
                 label={t("sections.basic.newApiAccount.userId.label")}
                 description={t("sections.basic.newApiAccount.userId.desc")}
-                required
               >
                 <Input
                   id={isEdit ? "edit-upstream-billing-user-id" : "upstream-billing-user-id"}
@@ -403,10 +467,7 @@ export function BasicInfoSection({
                     ? t("sections.basic.newApiAccount.cookie.configured")
                     : t("sections.basic.newApiAccount.cookie.desc")
                 }
-                required={
-                  !isEdit ||
-                  (!provider?.hasUpstreamBillingCookie && !provider?.hasUpstreamBillingAccessToken)
-                }
+                className="md:col-span-2"
               >
                 <div className="relative">
                   <Input

@@ -117,6 +117,19 @@ describe("provider upstream billing actions", () => {
     );
   });
 
+  it("已有余额快照时仍会重新探测并返回新结果", async () => {
+    mockFindProviderById.mockResolvedValue({
+      ...provider,
+      upstreamBillingSnapshot: { ...billing, balanceUsd: 1 },
+    });
+    mockProbe.mockResolvedValue({ ...billing, balanceUsd: 9 });
+
+    const result = await getProviderUpstreamBillingBatch([7]);
+
+    expect(result).toMatchObject({ ok: true, data: [{ balanceUsd: 9 }] });
+    expect(mockProbe).toHaveBeenCalledOnce();
+  });
+
   it("同步倍率会写入现有 costMultiplier 并清理缓存", async () => {
     const result = await syncProviderCostMultiplier(7);
 
@@ -161,7 +174,7 @@ describe("provider upstream billing actions", () => {
     );
   });
 
-  it("多 Key 供应商只探测排序后的第一个启用 Key", async () => {
+  it("Sub2API 多 Key 供应商会探测全部启用 Key 并汇总余额", async () => {
     const multiKeyProvider = {
       ...provider,
       apiKeys: [
@@ -183,16 +196,20 @@ describe("provider upstream billing actions", () => {
       ok: true,
       data: [
         {
-          balanceUsd: 2,
-          balanceRaw: 200,
+          balanceUsd: 4,
+          balanceRaw: 400,
           effectiveMultiplier: 0.75,
-          balanceAggregation: "single_key",
-          keys: [{ keyId: 12, balanceUsd: 2 }],
+          balanceAggregation: "sum_of_keys",
+          keys: [
+            { keyId: 12, balanceUsd: 2 },
+            { keyId: 11, balanceUsd: 2 },
+          ],
         },
       ],
     });
-    expect(mockProbe).toHaveBeenCalledOnce();
+    expect(mockProbe).toHaveBeenCalledTimes(2);
     expect(mockProbe).toHaveBeenCalledWith(expect.objectContaining({ key: "key-b", keyId: 12 }));
+    expect(mockProbe).toHaveBeenCalledWith(expect.objectContaining({ key: "key-a", keyId: 11 }));
   });
 
   it("上游没有倍率时不更新渠道", async () => {
@@ -208,7 +225,7 @@ describe("provider upstream billing actions", () => {
     );
   });
 
-  it("New-API 使用账户级凭据且只解析首 Key 的倍率", async () => {
+  it("New-API 使用账户级凭据并在单次探测中解析全部 Key 的倍率", async () => {
     const newApiProvider = {
       ...provider,
       upstreamBillingType: "new-api",
@@ -240,7 +257,10 @@ describe("provider upstream billing actions", () => {
         keyId: 11,
         upstreamBillingCookie: "session=test-cookie",
         upstreamBillingUserId: "42",
-        providerKeys: [expect.objectContaining({ id: 11, key: "key-a" })],
+        providerKeys: [
+          expect.objectContaining({ id: 11, key: "key-a" }),
+          expect.objectContaining({ id: 12, key: "key-b" }),
+        ],
       })
     );
 
@@ -271,7 +291,7 @@ describe("provider upstream billing actions", () => {
     );
   });
 
-  it("第二个 Key 即使不可用也不会影响首 Key 探测结果", async () => {
+  it("Sub2API 任一 Key 探测失败时返回部分成功且不伪造总余额", async () => {
     const multiKeyProvider = {
       ...provider,
       apiKeys: [
@@ -281,19 +301,28 @@ describe("provider upstream billing actions", () => {
     };
     mockFindProviderById.mockResolvedValue(multiKeyProvider);
     mockProbe.mockImplementation(async (config: { keyId: number }) => {
-      if (config.keyId !== 11) throw new Error("不应探测第二个 Key");
+      if (config.keyId === 12) {
+        return { ...billing, keyId: 12, status: "error", errorCode: "upstream_http_401" };
+      }
       return { ...billing, keyId: 11, balanceUsd: 1, balanceRaw: 100 };
     });
 
     const batch = await getProviderUpstreamBillingBatch([7]);
     expect(batch).toMatchObject({
       ok: true,
-      data: [{ status: "ok", balanceUsd: 1, balanceRaw: 100, balanceAggregation: "single_key" }],
+      data: [
+        {
+          status: "partial",
+          balanceUsd: null,
+          balanceRaw: null,
+          balanceAggregation: "unavailable",
+        },
+      ],
     });
-    expect(mockProbe).toHaveBeenCalledOnce();
+    expect(mockProbe).toHaveBeenCalledTimes(2);
   });
 
-  it("首 Key 部分成功时仍保留它返回的余额", async () => {
+  it("Sub2API 所有 Key 部分成功且余额完整时仍汇总余额", async () => {
     const multiKeyProvider = {
       ...provider,
       apiKeys: [
@@ -316,7 +345,7 @@ describe("provider upstream billing actions", () => {
     expect(result).toMatchObject({
       ok: true,
       data: [
-        { status: "partial", balanceUsd: 1, balanceRaw: 100, balanceAggregation: "single_key" },
+        { status: "partial", balanceUsd: 2, balanceRaw: 200, balanceAggregation: "sum_of_keys" },
       ],
     });
   });

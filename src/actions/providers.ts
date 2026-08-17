@@ -685,13 +685,13 @@ export async function addProvider(data: {
 
     const validated = CreateProviderSchema.parse(data);
     logger.trace("addProvider:validated", { name: validated.name });
-    if (
-      (validated.upstream_billing_type === "new-api" &&
-        !validated.upstream_billing_cookie &&
-        !validated.upstream_billing_access_token) ||
-      (validated.upstream_billing_type === "new-api" && !validated.upstream_billing_user_id)
-    ) {
-      return { ok: false, error: "New-API 需要 Session Cookie（或 Access Token）和用户 ID" };
+    if (validated.upstream_billing_type === "new-api") {
+      if (!validated.upstream_billing_access_token && !validated.upstream_billing_cookie) {
+        return { ok: false, error: "New-API 需要 Access Token；兼容旧版时可使用 Session Cookie" };
+      }
+      if (!validated.upstream_billing_access_token && !validated.upstream_billing_user_id) {
+        return { ok: false, error: "New-API 使用 Session Cookie 时还需要用户 ID" };
+      }
     }
 
     // 获取 favicon URL
@@ -1017,13 +1017,13 @@ export async function editProvider(
       validated.upstream_billing_user_id === undefined
         ? currentProvider.upstreamBillingUserId
         : validated.upstream_billing_user_id;
-    if (
-      updatesUpstreamBillingAccount &&
-      nextUpstreamBillingType === "new-api" &&
-      ((!nextUpstreamBillingCookie && !nextUpstreamBillingAccessToken) ||
-        !nextUpstreamBillingUserId)
-    ) {
-      return { ok: false, error: "New-API 需要 Session Cookie（或 Access Token）和用户 ID" };
+    if (updatesUpstreamBillingAccount && nextUpstreamBillingType === "new-api") {
+      if (!nextUpstreamBillingAccessToken && !nextUpstreamBillingCookie) {
+        return { ok: false, error: "New-API 需要 Access Token；兼容旧版时可使用 Session Cookie" };
+      }
+      if (!nextUpstreamBillingAccessToken && !nextUpstreamBillingUserId) {
+        return { ok: false, error: "New-API 使用 Session Cookie 时还需要用户 ID" };
+      }
     }
 
     const preimageFields: Record<string, unknown> = {};

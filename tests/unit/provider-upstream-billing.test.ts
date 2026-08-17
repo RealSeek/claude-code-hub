@@ -273,8 +273,8 @@ describe("provider upstream billing", () => {
       if (url.endsWith("/v1/sub2api/billing")) return jsonResponse({}, 404);
       if (url.endsWith("/api/user/self")) {
         const headers = new Headers(init?.headers);
-        expect(headers.get("cookie")).toBe("session=test-cookie");
-        expect(headers.get("authorization")).toBeNull();
+        expect(headers.get("cookie")).toBeNull();
+        expect(headers.get("authorization")).toBe("Bearer account-access-token");
         expect(headers.get("new-api-user")).toBe("42");
         expect(headers.get("user-agent")).toBe("cc-switch/1.0");
         return jsonResponse({
@@ -337,7 +337,7 @@ describe("provider upstream billing", () => {
     );
 
     const result = await probeProviderUpstreamBilling(
-      { ...config, upstreamBillingType: "new-api" },
+      { ...config, upstreamBillingType: "new-api", upstreamBillingAccessToken: null },
       fetchMock as typeof fetch
     );
 
@@ -359,7 +359,7 @@ describe("provider upstream billing", () => {
     );
 
     const result = await probeProviderUpstreamBilling(
-      { ...config, upstreamBillingType: "new-api" },
+      { ...config, upstreamBillingType: "new-api", upstreamBillingAccessToken: null },
       fetchMock as typeof fetch
     );
 
@@ -379,7 +379,7 @@ describe("provider upstream billing", () => {
     });
 
     const result = await probeProviderUpstreamBilling(
-      { ...config, upstreamBillingType: "new-api" },
+      { ...config, upstreamBillingType: "new-api", upstreamBillingAccessToken: null },
       fetchMock as typeof fetch
     );
 
@@ -501,12 +501,12 @@ describe("provider upstream billing", () => {
     expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/sub2api/"))).toBe(false);
   });
 
-  it("未配置 Cookie 时兼容 Bearer Access Token", async () => {
+  it("New-API 同时配置 Cookie 时优先使用 Access Token 且不要求用户 ID", async () => {
     const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const headers = new Headers(init?.headers);
       expect(headers.get("cookie")).toBeNull();
       expect(headers.get("authorization")).toBe("Bearer account-access-token");
-      expect(headers.get("new-api-user")).toBe("42");
+      expect(headers.get("new-api-user")).toBeNull();
       const url = String(input);
       if (url.endsWith("/api/user/self")) {
         return jsonResponse({ success: true, data: { quota: 500_000, group: "default" } });
@@ -521,7 +521,7 @@ describe("provider upstream billing", () => {
     });
 
     const result = await probeProviderUpstreamBilling(
-      { ...config, upstreamBillingType: "new-api", upstreamBillingCookie: null },
+      { ...config, upstreamBillingType: "new-api", upstreamBillingUserId: null },
       fetchMock as typeof fetch
     );
 

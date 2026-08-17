@@ -32,8 +32,6 @@ export async function getProviderUpstreamBillingBatch(
     providers,
     MAX_CONCURRENT_PROBES,
     async (provider): Promise<ProviderUpstreamBillingResult> => {
-      if (provider.upstreamBillingSnapshot) return provider.upstreamBillingSnapshot;
-
       const refreshed = await refreshProviderUpstreamBilling(provider.id, {
         source: "manual",
         force: true,

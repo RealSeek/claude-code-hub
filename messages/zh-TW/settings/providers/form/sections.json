@@ -32,14 +32,25 @@
       "placeholder": "例如 30"
     },
     "newApiAccount": {
+      "accessToken": {
+        "label": "New-API Access Token",
+        "desc": "在 New-API 個人設定中產生的系統管理 Access Token，探測時優先使用",
+        "configured": "已設定 Access Token；留空將保留目前值",
+        "placeholder": "輸入系統管理 Access Token",
+        "leaveEmpty": "留空保留目前 Access Token",
+        "clear": "清除已設定的 Access Token",
+        "cleared": "儲存後將清除目前 Access Token；輸入新值可改為取代",
+        "show": "顯示 Access Token",
+        "hide": "隱藏 Access Token"
+      },
       "userId": {
         "label": "New-API 使用者 ID",
-        "desc": "作為 New-Api-User 請求標頭查詢帳戶餘額",
+        "desc": "僅 Cookie 相容模式必填；使用 Access Token 時可選",
         "placeholder": "例如 1"
       },
       "cookie": {
         "label": "New-API Session Cookie",
-        "desc": "填寫登入後的完整 Cookie，例如 session=...；不是供應商 API Key",
+        "desc": "舊版相容憑證；未設定 Access Token 時填寫完整 Cookie，例如 session=...",
         "configured": "已設定帳戶憑證；留空將保留目前 Cookie",
         "placeholder": "輸入完整 Session Cookie",
         "leaveEmpty": "留空保留目前 Cookie",
@@ -47,7 +58,7 @@
         "hide": "隱藏 Session Cookie",
         "invalidWarning": "最近一次餘額與倍率同步顯示 New-API Cookie 已失效或驗證被拒絕。請填寫新的 Cookie，並核對使用者 ID。"
       },
-      "accessTokenInvalidWarning": "最近一次餘額與倍率同步顯示 New-API Access Token 已失效或驗證被拒絕。請改用有效的 Session Cookie，並核對使用者 ID。"
+      "accessTokenInvalidWarning": "最近一次餘額與倍率同步顯示 New-API Access Token 已失效或驗證被拒絕。請填寫新的 Access Token。"
     },
     "sub2apiAccount": {
       "authToken": {

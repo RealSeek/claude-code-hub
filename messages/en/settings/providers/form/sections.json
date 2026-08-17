@@ -32,14 +32,25 @@
       "placeholder": "For example, 30"
     },
     "newApiAccount": {
+      "accessToken": {
+        "label": "New-API access token",
+        "desc": "System-management access token generated in New-API account settings; preferred for probes",
+        "configured": "Access token configured; leave blank to keep the current value",
+        "placeholder": "Enter the system-management access token",
+        "leaveEmpty": "Leave blank to keep the current access token",
+        "clear": "Clear the configured access token",
+        "cleared": "The current access token will be cleared on save; enter a new value to replace it instead",
+        "show": "Show access token",
+        "hide": "Hide access token"
+      },
       "userId": {
         "label": "New-API user ID",
-        "desc": "Sent as New-Api-User when querying the account balance",
+        "desc": "Required only for legacy cookie authentication; optional with an access token",
         "placeholder": "For example, 1"
       },
       "cookie": {
         "label": "New-API session cookie",
-        "desc": "Full cookie from the signed-in account, such as session=...; not the provider API key",
+        "desc": "Legacy fallback credential; enter the full cookie when no access token is configured",
         "configured": "Account credentials configured; leave blank to keep the current cookie",
         "placeholder": "Enter the full session cookie",
         "leaveEmpty": "Leave blank to keep the current cookie",
@@ -47,7 +58,7 @@
         "hide": "Hide session cookie",
         "invalidWarning": "The latest balance and multiplier sync shows that the New-API cookie has expired or authentication was rejected. Enter a new cookie and verify the user ID."
       },
-      "accessTokenInvalidWarning": "The latest balance and multiplier sync shows that the New-API access token has expired or authentication was rejected. Use a valid session cookie and verify the user ID."
+      "accessTokenInvalidWarning": "The latest balance and multiplier sync shows that the New-API access token has expired or authentication was rejected. Enter a new access token."
     },
     "sub2apiAccount": {
       "authToken": {

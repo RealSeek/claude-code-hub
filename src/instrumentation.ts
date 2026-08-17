@@ -625,6 +625,17 @@ export async function register() {
         });
       }
 
+      try {
+        const { startProviderUpstreamBillingScheduler } = await import(
+          "@/lib/provider-upstream-billing-scheduler"
+        );
+        startProviderUpstreamBillingScheduler();
+      } catch (error) {
+        logger.warn("[Instrumentation] Failed to start provider upstream billing scheduler", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+
       const { reconcilePublicStatusSiteTitleAtStartup } = await import(
         "@/lib/public-status/startup-reconciliation"
       );
@@ -799,6 +810,17 @@ export async function register() {
           startEndpointProbeScheduler();
         } catch (error) {
           logger.warn("[Instrumentation] Failed to start endpoint probe scheduler", {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+
+        try {
+          const { startProviderUpstreamBillingScheduler } = await import(
+            "@/lib/provider-upstream-billing-scheduler"
+          );
+          startProviderUpstreamBillingScheduler();
+        } catch (error) {
+          logger.warn("[Instrumentation] Failed to start provider upstream billing scheduler", {
             error: error instanceof Error ? error.message : String(error),
           });
         }

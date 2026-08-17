@@ -32,14 +32,25 @@
       "placeholder": "Например, 30"
     },
     "newApiAccount": {
+      "accessToken": {
+        "label": "Access Token New-API",
+        "desc": "Системный Access Token из настроек аккаунта New-API; используется для проверки в первую очередь",
+        "configured": "Access Token настроен; оставьте поле пустым, чтобы сохранить текущее значение",
+        "placeholder": "Введите системный Access Token",
+        "leaveEmpty": "Оставьте пустым, чтобы сохранить Access Token",
+        "clear": "Удалить настроенный Access Token",
+        "cleared": "Текущий Access Token будет удален при сохранении; введите новое значение для замены",
+        "show": "Показать Access Token",
+        "hide": "Скрыть Access Token"
+      },
       "userId": {
         "label": "ID пользователя New-API",
-        "desc": "Передается в заголовке New-Api-User при проверке баланса аккаунта",
+        "desc": "Обязателен только для совместимого режима Cookie; с Access Token необязателен",
         "placeholder": "Например, 1"
       },
       "cookie": {
         "label": "Session Cookie New-API",
-        "desc": "Полный Cookie вошедшего аккаунта, например session=...; это не API-ключ провайдера",
+        "desc": "Совместимый режим для старых версий; укажите полный Cookie, если Access Token не настроен",
         "configured": "Учетные данные настроены; оставьте поле пустым, чтобы сохранить текущий Cookie",
         "placeholder": "Введите полный Session Cookie",
         "leaveEmpty": "Оставьте пустым, чтобы сохранить текущий Cookie",
@@ -47,7 +58,7 @@
         "hide": "Скрыть Session Cookie",
         "invalidWarning": "Последняя синхронизация баланса и множителя показала, что Cookie New-API истек или аутентификация отклонена. Укажите новый Cookie и проверьте ID пользователя."
       },
-      "accessTokenInvalidWarning": "Последняя синхронизация баланса и множителя показала, что Access Token New-API истек или аутентификация отклонена. Используйте действительный Session Cookie и проверьте ID пользователя."
+      "accessTokenInvalidWarning": "Последняя синхронизация баланса и множителя показала, что Access Token New-API истек или аутентификация отклонена. Укажите новый Access Token."
     },
     "sub2apiAccount": {
       "authToken": {

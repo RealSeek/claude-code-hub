@@ -571,7 +571,7 @@ describe("Provider Actions - Async Optimization", () => {
       expect(revalidatePathMock).not.toHaveBeenCalled();
     });
 
-    it("显式创建 New-API 时要求 Session Cookie 或 Access Token 与用户 ID", async () => {
+    it("显式创建 New-API 时要求 Access Token 或 Cookie 兼容凭据", async () => {
       const { addProvider } = await import("@/actions/providers");
       const missingCredentials = await addProvider({
         name: "new-api",
@@ -586,7 +586,25 @@ describe("Provider Actions - Async Optimization", () => {
 
       expect(missingCredentials).toEqual({
         ok: false,
-        error: "New-API 需要 Session Cookie（或 Access Token）和用户 ID",
+        error: "New-API 需要 Access Token；兼容旧版时可使用 Session Cookie",
+      });
+      expect(createProviderMock).not.toHaveBeenCalled();
+
+      const cookieWithoutUserId = await addProvider({
+        name: "new-api-cookie",
+        url: "https://api.example.com",
+        key: "sk-test-cookie",
+        upstream_billing_type: "new-api",
+        upstream_billing_cookie: "session=test-cookie",
+        tpm: null,
+        rpm: null,
+        rpd: null,
+        cc: null,
+      });
+
+      expect(cookieWithoutUserId).toEqual({
+        ok: false,
+        error: "New-API 使用 Session Cookie 时还需要用户 ID",
       });
       expect(createProviderMock).not.toHaveBeenCalled();
 
@@ -609,6 +627,28 @@ describe("Provider Actions - Async Optimization", () => {
           upstream_billing_cookie: "session=test-cookie",
           upstream_billing_user_id: "42",
         })
+      );
+
+      const accessTokenOnly = await addProvider({
+        name: "new-api-token",
+        url: "https://api.example.com",
+        key: "sk-test-3",
+        upstream_billing_type: "new-api",
+        upstream_billing_access_token: "account-access-token",
+        tpm: null,
+        rpm: null,
+        rpd: null,
+        cc: null,
+      });
+
+      expect(accessTokenOnly.ok).toBe(true);
+      expect(createProviderMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          upstream_billing_access_token: "account-access-token",
+        })
+      );
+      expect(createProviderMock.mock.calls.at(-1)?.[0]).not.toHaveProperty(
+        "upstream_billing_user_id"
       );
     });
 
@@ -681,7 +721,7 @@ describe("Provider Actions - Async Optimization", () => {
 
       expect(result).toEqual({
         ok: false,
-        error: "New-API 需要 Session Cookie（或 Access Token）和用户 ID",
+        error: "New-API 需要 Access Token；兼容旧版时可使用 Session Cookie",
       });
       expect(updateProviderMock).not.toHaveBeenCalled();
     });

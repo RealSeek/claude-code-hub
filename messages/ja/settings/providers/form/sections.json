@@ -32,14 +32,25 @@
       "placeholder": "例: 30"
     },
     "newApiAccount": {
+      "accessToken": {
+        "label": "New-API Access Token",
+        "desc": "New-API のアカウント設定で生成するシステム管理用 Access Token。照会時に優先して使用します",
+        "configured": "Access Token は設定済みです。空欄の場合は現在の値を保持します",
+        "placeholder": "システム管理用 Access Token を入力",
+        "leaveEmpty": "空欄で現在の Access Token を保持",
+        "clear": "設定済みの Access Token を削除",
+        "cleared": "保存時に現在の Access Token を削除します。新しい値を入力すると置き換えられます",
+        "show": "Access Token を表示",
+        "hide": "Access Token を非表示"
+      },
       "userId": {
         "label": "New-API ユーザー ID",
-        "desc": "残高照会時に New-Api-User ヘッダーとして送信します",
+        "desc": "Cookie 互換認証でのみ必須です。Access Token 使用時は任意です",
         "placeholder": "例: 1"
       },
       "cookie": {
         "label": "New-API Session Cookie",
-        "desc": "ログイン後の完全な Cookie（session=...）です。プロバイダー API キーではありません",
+        "desc": "旧バージョン向けの互換認証情報です。Access Token がない場合に完全な Cookie を入力します",
         "configured": "アカウント認証情報は設定済みです。空欄の場合は現在の Cookie を保持します",
         "placeholder": "完全な Session Cookie を入力",
         "leaveEmpty": "空欄の場合は現在の Cookie を保持",
@@ -47,7 +58,7 @@
         "hide": "Session Cookie を非表示",
         "invalidWarning": "最新の残高・倍率同期で New-API Cookie の有効期限切れまたは認証拒否が検出されました。新しい Cookie を入力し、ユーザー ID を確認してください。"
       },
-      "accessTokenInvalidWarning": "最新の残高・倍率同期で New-API Access Token の有効期限切れまたは認証拒否が検出されました。有効な Session Cookie を使用し、ユーザー ID を確認してください。"
+      "accessTokenInvalidWarning": "最新の残高・倍率同期で New-API Access Token の有効期限切れまたは認証拒否が検出されました。新しい Access Token を入力してください。"
     },
     "sub2apiAccount": {
       "authToken": {

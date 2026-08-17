@@ -643,7 +643,8 @@ async function probeNewApi(
   const cookie = config.upstreamBillingCookie?.trim();
   const accessToken = config.upstreamBillingAccessToken?.trim();
   const userId = config.upstreamBillingUserId?.trim();
-  if ((!cookie && !accessToken) || !userId) {
+  const usesCookie = !accessToken && Boolean(cookie);
+  if ((!accessToken && !cookie) || (usesCookie && !userId)) {
     return {
       ...resultBase(config.id),
       source: "new-api",
@@ -654,8 +655,8 @@ async function probeNewApi(
   }
 
   const accountHeaders = {
-    ...(cookie ? { cookie } : { authorization: `Bearer ${accessToken}` }),
-    "new-api-user": userId,
+    ...(accessToken ? { authorization: `Bearer ${accessToken}` } : { cookie: cookie! }),
+    ...(userId ? { "new-api-user": userId } : {}),
     "user-agent": "cc-switch/1.0",
   };
   const account = await fetchJson(
@@ -674,7 +675,7 @@ async function probeNewApi(
       errorCode: "unsupported_upstream",
     };
   }
-  const credentialErrorCode = getNewApiCredentialErrorCode(account.response, Boolean(cookie));
+  const credentialErrorCode = getNewApiCredentialErrorCode(account.response, usesCookie);
   if (credentialErrorCode) {
     return {
       ...resultBase(config.id),
@@ -726,7 +727,7 @@ async function probeNewApi(
   );
   const groupsCredentialErrorCode = getNewApiCredentialErrorCode(
     groupsResponse.response,
-    Boolean(cookie)
+    usesCookie
   );
   if (groupsCredentialErrorCode) {
     return {
@@ -761,7 +762,7 @@ async function probeNewApi(
     baseUrl,
     fetchImpl,
     accountHeaders,
-    Boolean(cookie)
+    usesCookie
   );
   if (tokenResult.errorCode) {
     return {
